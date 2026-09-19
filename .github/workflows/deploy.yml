@@ -94,18 +94,33 @@ jobs:
       - name: Post-deploy smoke check (production)
         if: github.ref == 'refs/heads/main'
         run: |
-          set -e
           BASE="https://ssh.lemonhub.online"
-          echo "==> GET /api/health"
-          curl -sf --max-time 20 "$BASE/api/health" | grep -q '"ok"\|"status"' && echo ok
-          echo "==> GET /api/config (expect p2pEnabled)"
-          curl -sf --max-time 20 "$BASE/api/config" | grep -q '"p2pEnabled":true' && echo ok
-          echo "==> GET /install.sh"
-          curl -sf --max-time 20 "$BASE/install.sh" | head -1 | grep -q '#!/bin/sh' && echo ok
-          echo "==> GET /install.ps1"
-          curl -sf --max-time 20 "$BASE/install.ps1" | grep -qi 'param(' && echo ok
-          echo "==> HEAD /api/agent/download/cloudssh-agent-linux-x64"
-          curl -sfI --max-time 30 "$BASE/api/agent/download/cloudssh-agent-linux-x64" | head -1 | grep -q ' 200' && echo ok
-          echo "==> negative asset check (expect 400)"
-          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$BASE/api/agent/download/evil.exe")
-          [ "$code" = "400" ] && echo ok
+          fail=0
+          check() { # $1=label $2=path $3=expect-status $4=grep-pattern(optional)
+            local code body
+            body=$(curl -s --max-time 30 -w '\n%{http_code}' "$BASE$2" || true)
+            code=$(echo "$body" | tail -1)
+            body=$(echo "$body" | sed '$d')
+            if [ "$code" != "$3" ]; then
+              echo "FAIL $1: status=$code (expect $3)"
+              echo "$body" | head -5
+              fail=1
+              return
+            fi
+            if [ -n "$4" ] && ! echo "$body" | grep -q "$4"; then
+              echo "FAIL $1: body missing '$4'"
+              echo "$body" | head -5
+              fail=1
+              return
+            fi
+            echo "PASS $1 (status=$code)"
+          }
+          check "health"        "/api/health"  200 '"status":"ok"'
+          check "config p2p"    "/api/config"  200 '"p2pEnabled":true'
+          check "install.sh"    "/install.sh"  200 '#!/bin/sh'
+          check "install.ps1"   "/install.ps1" 200 'param('
+          check "bad asset 400" "/api/agent/download/evil.exe" 400
+          echo "==> HEAD download proxy"
+          hcode=$(curl -sI -o /dev/null -w '%{http_code}' --max-time 60 "$BASE/api/agent/download/cloudssh-agent-linux-x64" || true)
+          if [ "$hcode" = "200" ]; then echo "PASS download proxy (status=$hcode)"; else echo "FAIL download proxy: status=$hcode"; fail=1; fi
+          exit $fail
