@@ -68,8 +68,8 @@ describe('agent-bootstrap 命令构建', () => {
 
   it('用户级安装命令：token 走 stdin，argv 无秘密', () => {
     const spec = buildInstallCommand({
-      installBase: 'https://cloudssh.mzhub.workers.dev',
-      agentServer: 'https://cloudssh.mzhub.workers.dev',
+      installBase: 'https://ssh.lemonhub.online',
+      agentServer: 'https://ssh.lemonhub.online',
       system: false,
     });
     expect(spec.stdinLines).toEqual(['token']);
@@ -84,8 +84,8 @@ describe('agent-bootstrap 命令构建', () => {
 
   it('系统级安装命令：token+sudo 双行 stdin + 清理', () => {
     const spec = buildInstallCommand({
-      installBase: 'https://cloudssh.mzhub.workers.dev',
-      agentServer: 'https://cloudssh.mzhub.workers.dev',
+      installBase: 'https://ssh.lemonhub.online',
+      agentServer: 'https://ssh.lemonhub.online',
       system: true,
     });
     expect(spec.stdinLines).toEqual(['token', 'sudo']);

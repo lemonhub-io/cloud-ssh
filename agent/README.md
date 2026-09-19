@@ -28,9 +28,9 @@ iex "& { $(irm https://ssh.lemonhub.online/install.ps1) } -Token '<githubId>:<ag
 ```
 
 - 二进制为 Node SEA 单文件可执行文件（linux/darwin/windows × x64/arm64），**目标机无需 Node.js**。
-- 下载多镜像回退：`https://<site>/api/agent/download/<asset>` 本站代理 → workers.dev 代理 → GitHub Release `agent-latest` 直连，被墙与机房网络均可完成。
-- **Agent 回连（信令 WS + 审计/OS 回传）默认指向 workers.dev 源**：自定义域名可能对机房 IP 弹出 CF 托管挑战（403 "Just a moment"），workers.dev 不经挑战。若取脚本本身被拦，把命令里的域名换成 workers.dev 地址即可。
-- 凭据写入 `~/.config/cloudssh-agent/agent.env`（0600）而非命令行；`--no-service` 可跳过自启、直接前台运行；`--server` 显式覆盖回连源（需绕过挑战时请自行保证该源可达且不被挑战）。
+- 下载多镜像回退：`https://<site>/api/agent/download/<asset>` 本站代理 → GitHub Release `agent-latest` 直连，被墙与机房网络均可完成。
+- **Agent 回连（信令 WS + 审计/OS 回传）默认指向自定义域名**（生产不使用 workers.dev）。注意：若 zone 安全设置对机房 IP 弹 CF 托管挑战（403 "Just a moment"），需在 Cloudflare Dashboard 调整（关闭 Bot Fight Mode，或为 `/api/agent/*`、`/install.*` 等机端路径加 WAF skip 规则），否则机端信令与下载可能被拦。
+- 凭据写入 `~/.config/cloudssh-agent/agent.env`（0600）而非命令行；`--no-service` 可跳过自启、直接前台运行；`--server` 显式覆盖回连源。
 - 二进制由 `.github/workflows/release-agent.yml` 在 `agent/**` 变更时自动构建（`agent/scripts/build-sea.sh`：esbuild 全量 CJS 打包 → sea blob → postject 注入各平台官方 node 二进制）。
 
 ## 手动运行（源码）
@@ -38,7 +38,7 @@ iex "& { $(irm https://ssh.lemonhub.online/install.ps1) } -Token '<githubId>:<ag
 ```bash
 pnpm install && pnpm run build
 node dist/agent.js \
-  --server https://cloudssh.mzhub.workers.dev \
+  --server https://ssh.lemonhub.online \
   --token <githubId>:<agentId>:<secret> \
   --allowlist '*.corp.local,bastion.internal' \
   --max-sessions 8
@@ -50,7 +50,7 @@ node dist/agent.js \
 
 | 参数 | 环境变量 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `--server` | `AGENT_SERVER` | `https://cloudssh.mzhub.workers.dev` | 站点源（默认 workers.dev，避开自定义域名机房挑战） |
+| `--server` | `AGENT_SERVER` | `https://ssh.lemonhub.online` | 站点源（默认生产自定义域名） |
 | `--token` | `AGENT_TOKEN` | — | 创建 Agent 时一次性返回的令牌 |
 | `--signal-url` | `AGENT_SIGNAL_URL` | 由 server 推导 | 信令 WS 覆盖 |
 | `--allowlist` | `AGENT_ALLOWLIST` | 不限制 | 目标 host 白名单，支持 `*.domain` |

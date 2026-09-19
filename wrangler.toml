@@ -17,9 +17,6 @@ ENABLE_P2P = "true"
 # Cloudflare Realtime TURN key id（资源标识符，非凭据）；TURN_API_TOKEN
 # 为密钥，经 wrangler secret put / CI 注入，切勿写入本文件
 TURN_KEY_ID = "8a2726d9a1d6e5431747b0408e278e84"
-# Agent 机端默认源（workers.dev 不经自定义域名的安全挑战，机房/VPS 可直连）；
-# 浏览器与人机交互仍走自定义域名。部署后若 workers.dev 子域变更需同步此处。
-WORKERS_DEV_ORIGIN = "https://cloudssh.mzhub.workers.dev"
 
 # 构建监视路径：仅源代码变动时触发重新构建
 [build]
@@ -72,7 +69,6 @@ name = "cloudssh-test"
 DEBUG_MODE = "true"
 ENABLE_P2P = "true"
 TURN_KEY_ID = "8a2726d9a1d6e5431747b0408e278e84"
-WORKERS_DEV_ORIGIN = "https://cloudssh-test.mzhub.workers.dev"
 
 [[env.test.durable_objects.bindings]]
 name = "SSH_SESSION"

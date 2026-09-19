@@ -626,13 +626,6 @@ export const enUS: Record<keyof typeof zhCN, string> = {
   'agent.installManual': 'Manual (requires Node.js ≥ 20 and the source repo)',
   'agent.copyInstall': 'Copy install command',
   'agent.installCopied': 'Install command copied',
-  'agent.installFallback':
-    'If the target machine is on a datacenter network and the script download is blocked (Cloudflare challenge page), replace the domain in the command with {host} and run it again.',
-  'agent.firstPromptTitle': 'Choose a connection mode',
-  'agent.firstPromptDesc':
-    'CloudSSH supports an optional P2P mode: install a lightweight agent on a machine that can reach your SSH hosts (one command), and your browser connects to it over WebRTC with zero server-side relaying. Without it, connections relay through Cloudflare with identical functionality.',
-  'agent.firstPromptRelay': 'Use relay (recommended)',
-  'agent.firstPromptInstall': 'Install agent for P2P',
   'agent.switchTitle': 'Agent is online',
   'agent.switchPrompt': 'An agent is online. Switch the connection mode to P2P?',
   'agent.switched': 'Switched to P2P mode',

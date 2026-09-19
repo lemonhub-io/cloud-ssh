@@ -386,7 +386,8 @@ async function run(terminal: SSHTerminal, server: ServerConfig, upgrade: P2PUpgr
   if (!agent) return;
 
   const origin = window.location.origin;
-  const agentServer = config.workersDevOrigin || origin;
+  // Agent 回连源与站点同源（生产=自定义域名，workers.dev 不用于生产）
+  const agentServer = origin;
   terminal.writeBootstrapStatus(t('agent.bootInstalling'));
   const res = await sendAndAwait(
     terminal,

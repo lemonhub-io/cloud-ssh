@@ -412,10 +412,10 @@ export default {
 
       // Agent 一键安装脚本与免安装二进制分发（公开，无需登录）
       if (url.pathname === '/install.sh') {
-        return installScriptResponse(request, 'sh', env);
+        return installScriptResponse(request, 'sh');
       }
       if (url.pathname === '/install.ps1') {
-        return installScriptResponse(request, 'ps1', env);
+        return installScriptResponse(request, 'ps1');
       }
       if (url.pathname.startsWith('/api/agent/download/')) {
         return handleAgentDownload(url);
@@ -430,7 +430,6 @@ export default {
           githubAuthRequired: isGitHubAuthRequired(env),
           sshSharingEnabled: isSSHSharingEnabled(env),
           p2pEnabled: isP2PEnabled(env),
-          workersDevOrigin: env.WORKERS_DEV_ORIGIN?.trim() || null,
         });
       }
 

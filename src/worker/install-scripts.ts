@@ -7,8 +7,6 @@
  * Token 写入 chmod 600 的 env 文件而非命令行参数，避免 ps 泄露。
  */
 
-import type { Env } from '../types';
-
 const AGENT_RELEASE_BASE =
   'https://github.com/vexuni/cloud-ssh/releases/download/agent-latest';
 
@@ -17,12 +15,11 @@ const AGENT_ASSET_PATTERN = /^cloudssh-agent-(linux|darwin|windows)-(x64|arm64)(
 const INSTALL_SH = `#!/bin/sh
 # cloudssh-agent 一键安装 —— CloudSSH P2P 网关 Agent
 #   curl -fsSL __BASE__/install.sh | sh -s -- --token <githubId>:<agentId>:<secret>
-# 可选：--server <origin> 覆盖 Agent 回连源（默认 workers.dev，绕过自定义
-#   域名的 CF 托管挑战）；--no-service 跳过开机自启
+# 可选：--server <origin> 覆盖 Agent 回连源（默认即下载源站点）；
+#   --system 走 root 路径 + 系统 unit；--no-service 跳过开机自启
 set -eu
 
 BASE="__BASE__"
-WDD="__WDD__"
 TOKEN=""
 SERVER=""
 SYSTEM=0
@@ -47,8 +44,8 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$TOKEN" ] || { echo "error: --token <githubId>:<agentId>:<secret> is required" >&2; exit 2; }
-# Agent 回连默认走 workers.dev：自定义域名可能对机房 IP 弹出 CF 托管挑战（403）
-[ -n "$SERVER" ] || SERVER="\${WDD:-$BASE}"
+# Agent 回连默认即脚本下载源站点（生产=自定义域名）
+[ -n "$SERVER" ] || SERVER="$BASE"
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
@@ -78,7 +75,7 @@ ENV_FILE="$CONFIG_DIR/agent.env"
 
 mkdir -p "$INSTALL_DIR" "$CONFIG_DIR"
 
-# 多镜像下载：本站代理 → workers.dev 代理（绕自定义域名挑战）→ GitHub 直连。
+# 多镜像下载：本站代理 → GitHub 直连。
 # 体积校验挡住挑战页/错误页（CF 挑战也可能返回 200 + HTML）。
 GH_URL="https://github.com/vexuni/cloud-ssh/releases/download/agent-latest/$ASSET"
 fetch() {
@@ -92,9 +89,7 @@ fetch() {
 }
 valid_binary() { [ -s "$BIN" ] && [ "$(wc -c < "$BIN")" -gt 1000000 ]; }
 
-URLS="$BASE/api/agent/download/$ASSET"
-[ -n "$WDD" ] && [ "$WDD" != "$BASE" ] && URLS="$URLS $WDD/api/agent/download/$ASSET"
-URLS="$URLS $GH_URL"
+URLS="$BASE/api/agent/download/$ASSET $GH_URL"
 ok=0
 for url in $URLS; do
   echo "==> downloading $ASSET"
@@ -229,8 +224,8 @@ echo "    the agent should appear online in the CloudSSH Agent panel within seco
 
 const INSTALL_PS1 = `# cloudssh-agent 一键安装 —— CloudSSH P2P 网关 Agent（Windows）
 #   iex "& { $(irm __BASE__/install.ps1) } -Token '<githubId>:<agentId>:<secret>'"
-# 可选：-Server <origin> 覆盖 Agent 回连源（默认 workers.dev，绕过自定义
-#   域名的 CF 托管挑战）；-NoService 跳过开机自启
+# 可选：-Server <origin> 覆盖 Agent 回连源（默认即下载源站点）；
+#   -NoService 跳过开机自启
 param(
   [Parameter(Mandatory=$true)][string]$Token,
   [string]$Server = "",
@@ -241,20 +236,20 @@ if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
   throw "unsupported architecture: $env:PROCESSOR_ARCHITECTURE (x64 build only)"
 }
 $Base = "__BASE__"
-$Wdd = "__WDD__"
-if (-not $Server) { $Server = $Wdd; if (-not $Server) { $Server = $Base } }
+if (-not $Server) { $Server = $Base }
 $Dir = Join-Path $env:LOCALAPPDATA 'CloudSSHAgent'
 $Bin = Join-Path $Dir 'cloudssh-agent.exe'
 $EnvFile = Join-Path $Dir 'agent.env'
 $Runner = Join-Path $Dir 'run-agent.ps1'
 New-Item -ItemType Directory -Force $Dir | Out-Null
 
-# 多镜像下载：本站代理 → workers.dev 代理（绕自定义域名挑战）→ GitHub 直连。
+# 多镜像下载：本站代理 → GitHub 直连。
 # 体积校验挡住挑战页/错误页（CF 挑战也可能返回 200 + HTML）。
 $Asset = 'cloudssh-agent-windows-x64.exe'
-$Mirrors = @("$Base/api/agent/download/$Asset")
-if ($Wdd -and $Wdd -ne $Base) { $Mirrors += "$Wdd/api/agent/download/$Asset" }
-$Mirrors += "https://github.com/vexuni/cloud-ssh/releases/download/agent-latest/$Asset"
+$Mirrors = @(
+  "$Base/api/agent/download/$Asset",
+  "https://github.com/vexuni/cloud-ssh/releases/download/agent-latest/$Asset"
+)
 $ok = $false
 foreach ($u in $Mirrors) {
   Write-Host "==> downloading $Asset"
@@ -299,19 +294,14 @@ Write-Host "    verify: & $Bin --version"
 Write-Host "    the agent should appear online in the CloudSSH Agent panel within seconds"
 `;
 
-function withOrigin(script: string, origin: string, wdd: string): string {
-  return script.replaceAll('__BASE__', origin).replaceAll('__WDD__', wdd);
+function withOrigin(script: string, origin: string): string {
+  return script.replaceAll('__BASE__', origin);
 }
 
 /** 安装脚本响应（无认证；内容按请求源模板化，curl|sh 直接可用）。 */
-export function installScriptResponse(
-  request: Request,
-  kind: 'sh' | 'ps1',
-  env: Pick<Env, 'WORKERS_DEV_ORIGIN'>
-): Response {
+export function installScriptResponse(request: Request, kind: 'sh' | 'ps1'): Response {
   const origin = new URL(request.url).origin;
-  const wdd = env.WORKERS_DEV_ORIGIN?.trim() || origin;
-  const body = withOrigin(kind === 'sh' ? INSTALL_SH : INSTALL_PS1, origin, wdd);
+  const body = withOrigin(kind === 'sh' ? INSTALL_SH : INSTALL_PS1, origin);
   return new Response(body, {
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',

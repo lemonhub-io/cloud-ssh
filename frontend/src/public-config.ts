@@ -5,8 +5,6 @@ export interface PublicConfig {
   githubAuthRequired: boolean;
   sshSharingEnabled: boolean;
   p2pEnabled?: boolean;
-  /** Agent 机端默认源（workers.dev，不经自定义域名挑战）；未配置为 null */
-  workersDevOrigin?: string | null;
 }
 
 /**

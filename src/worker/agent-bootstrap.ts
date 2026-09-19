@@ -94,9 +94,9 @@ export function parseProbeOutput(stdout: string): AgentProbeResult | null {
 }
 
 export interface InstallSpec {
-  /** install.sh 的下载源（一般传 workers.dev 源，绕自定义域名机房挑战） */
+  /** install.sh 的下载源（生产=自定义域名；workers.dev 不用于生产） */
   installBase: string;
-  /** Agent 回连源（workers.dev），写入远端 agent.env */
+  /** Agent 回连源（与站点同源），写入远端 agent.env */
   agentServer: string;
   /** true → sudo 系统级安装（/usr/local/bin + /etc env + system unit） */
   system: boolean;

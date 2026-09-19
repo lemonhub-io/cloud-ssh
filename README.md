@@ -223,7 +223,7 @@ curl -fsSL https://<你的站点>/install.sh | sh -s -- --token <githubId>:<agen
 iex "& { $(irm https://<你的站点>/install.ps1) } -Token '<githubId>:<agentId>:<secret>'"
 ```
 
-二进制由 CI 以 Node SEA 构建（linux/darwin/windows × x64/arm64），目标机无需 Node.js。下载走多镜像回退：本站代理 → workers.dev 代理 → GitHub 直连，被墙或机房网络都能完成下载。**Agent 回连（信令 WS + 审计/OS 回传）默认指向 workers.dev 源**——自定义域名可能对机房 IP 弹出 CF 托管挑战（403），workers.dev 不经挑战；若取脚本本身被拦，可将命令中的域名换成 workers.dev 地址。可选 `--system`（root 路径 + 系统 unit）、`--no-service` 只前台运行、`--server` 显式覆盖回连源。手动方式（Node.js ≥ 20 + 源码）：`cd agent && pnpm install && pnpm run build && node dist/agent.js --token <令牌>`，参数亦可全部走环境变量（`AGENT_TOKEN`/`AGENT_SERVER`/`AGENT_SIGNAL_URL`/`AGENT_ALLOWLIST`/`AGENT_MAX_SESSIONS`/`AGENT_DEBUG`）。
+二进制由 CI 以 Node SEA 构建（linux/darwin/windows × x64/arm64），目标机无需 Node.js。下载走多镜像回退：本站代理 → GitHub 直连，被墙或机房网络都能完成下载。**Agent 回连（信令 WS + 审计/OS 回传）默认指向自定义域名**——生产不使用 workers.dev。注意 zone 安全设置（Managed Challenge / Bot Fight Mode）可能对机房 IP 返回 403 挑战页：浏览器不受影响，但 `/install.sh`、`/api/agent/download/*`、`/api/agent/ws` 信令等机端路径可能被拦——若遇到请在 Cloudflare Dashboard 为机端路径配置 WAF skip 或关闭 Bot Fight Mode。可选 `--system`（root 路径 + 系统 unit）、`--no-service` 只前台运行、`--server` 显式覆盖回连源。手动方式（Node.js ≥ 20 + 源码）：`cd agent && pnpm install && pnpm run build && node dist/agent.js --token <令牌>`，参数亦可全部走环境变量（`AGENT_TOKEN`/`AGENT_SERVER`/`AGENT_SIGNAL_URL`/`AGENT_ALLOWLIST`/`AGENT_MAX_SESSIONS`/`AGENT_DEBUG`）。
 
 Agent 上线后面板会询问是否切换到 P2P；也可随时在「连接传输」中手动选择（默认仍为中继）。浏览器先经 DO 信令与 Agent 完成 ICE/DTLS 握手，终端与 SFTP 随后跑在 DataChannel 上；信令超时或协商失败自动回落中继（分享链接透明降级，不消耗第二次票据）。
 

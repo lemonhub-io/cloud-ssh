@@ -193,9 +193,6 @@ export interface Env {
   TURN_EXTRA_URIS?: string;
   TURN_EXTRA_USERNAME?: string;
   TURN_EXTRA_CREDENTIAL?: string;
-  // Agent 机端默认源：workers.dev 域名不经自定义域名的 CF 托管挑战，
-  // 安装脚本将 Agent 信令/回传默认指向它，机房 IP 不被 403 拦截。
-  WORKERS_DEV_ORIGIN?: string;
 }
 
 export interface UserInfo {
