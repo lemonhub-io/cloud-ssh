@@ -733,7 +733,7 @@ WARNING: This link could potentially be dangerous\`)){let t=window.open();if(t){
           </div>
           <div class="mt-4 text-center">
             <a
-              href="https://github.com/newbietan/CloudSSH"
+              href="https://github.com/vexuni/cloud-ssh"
               class="text-[13px] text-primary opacity-60 hover:opacity-100 transition-colors tracking-widest uppercase"
               >[ GitHub Open Source ]</a
             >
@@ -1041,13 +1041,13 @@ WARNING: This link could potentially be dangerous\`)){let t=window.open();if(t){
             © <span id="user-copyright-year"></span> CLOUD_SSH_TERMINAL<span
               class="user-space-footer-url"
             >
-              - https://github.com/newbietan/CloudSSH</span
+              - https://github.com/vexuni/cloud-ssh</span
             >
           </div>
           <div class="flex gap-4">
             <a
               class="text-on-surface-variant opacity-60 hover:opacity-100 transition-opacity"
-              href="https://github.com/newbietan/CloudSSH"
+              href="https://github.com/vexuni/cloud-ssh"
               data-i18n="common.documentation"
               >文档</a
             >
@@ -1678,12 +1678,12 @@ WARNING: This link could potentially be dangerous\`)){let t=window.open();if(t){
         >
           <div class="text-secondary-container opacity-60">
             © <span id="copyright-year"></span> CLOUD_SSH_TERMINAL -
-            https://github.com/newbietan/CloudSSH
+            https://github.com/vexuni/cloud-ssh
           </div>
           <div class="flex gap-4">
             <a
               class="text-on-surface-variant opacity-60 hover:opacity-100 transition-opacity"
-              href="https://github.com/newbietan/CloudSSH"
+              href="https://github.com/vexuni/cloud-ssh"
               data-i18n="common.documentation"
               >文档</a
             >

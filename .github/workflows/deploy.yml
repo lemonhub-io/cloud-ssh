@@ -17,7 +17,7 @@ on:
 
 jobs:
   deploy:
-    if: github.repository_owner == 'newbietan'
+    if: github.repository_owner == 'vexuni'
     runs-on: ubuntu-latest
     permissions:
       contents: read

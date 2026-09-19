@@ -255,19 +255,18 @@ pnpm run verify      # typecheck + test + build:frontend + test:e2e 完整门禁
 
 ## Git 工作流规范
 
-**禁止创建特性分支（feature branch）。** 所有变更必须直接提交到 `test` 分支，保持仓库分支结构整洁。
+变更直接提交到 `main` 分支。提交前运行 `pnpm run verify`（或至少 `typecheck` + `test`）确认质量门禁通过。
 
-```
-test 分支（开发/测试）  ──合并──>  main 分支（生产）
-```
+### 分支与部署
 
-### 提交流程
+`deploy.yml` 监听 `test` 与 `main` 两个分支的推送（仅在 `vexuni` 名下的仓库启用）：
 
-1. 切换到 `test` 分支：`git checkout test`
-2. 拉取最新代码：`git pull origin test`
-3. 进行开发并本地测试
-4. 直接提交到 `test` 分支并推送：`git push origin test`
-5. 测试通过后，维护者将 `test` 合并到 `main`
+| 分支 | 触发部署 | 目标 Worker |
+| ------ | --------- | ----------- |
+| `main` | ✅ | `cloudssh`（生产） |
+| `test` | ✅ | `cloudssh-test`（可选的预发环境） |
+
+日常开发直接推送到 `main`；如需隔离的预发环境，可使用 `test` 分支触发 `cloudssh-test` 部署，两个环境的 Durable Objects 数据完全隔离。
 
 ### 提交信息规范
 
@@ -283,15 +282,7 @@ perf: 性能优化
 docs: 文档更新
 chore: 构建/配置变更
 ci: CI/CD 变更
-release: 发布 vX.Y.Z <主题>版本（如 `release: 发布 v1.10.2 工作流和文档更新版本`）
 ```
-
-### 分支用途
-
-| 分支 | 用途 | 可直接推送 |
-| ------ | ------ | ----------- |
-| `test` | 所有开发、测试、PR 合入 | ✅ |
-| `main` | 生产环境，仅通过 test 合入 | ❌（保护分支） |
 
 ## Common Pitfalls
 
@@ -407,34 +398,8 @@ CLI: `npx wrangler secret set <SECRET_NAME>`
 - 只有确认环境中没有需要保留的数据、且明确要重建整个环境时，才可删除 Worker
 - Test 环境 DO 绑定与 production 相同的 class_name，但因 Worker 名称不同，数据完全隔离
 
-## AI 版本发布与文档维护规范
+## 版本与发布
 
-在辅助人类进行版本升级和发布时，AI 助手必须严格遵守以下规范：
-
-1. **版本信息流转（由人类主导，AI 辅助更新）**：
-   - 严禁 AI 助手自主决定或递增版本号。
-   - 当需要发布新版本时，根据人类指定的版本号，AI 应在本地修改：
-     - `package.json` 中的 `"version": "X.Y.Z"`。
-     - `frontend/package.json` 中的 `"version": "X.Y.Z"`（与根目录保持一致）。
-     - `CHANGELOG.md` 头部追加最新的更新日志（格式需为 `## [X.Y.Z] - YYYY-MM-DD`）。
-   - 必须遵循 [Keep a Changelog](https://keepachangelog.com/) 规范组织内容。
-2. **README 导航链接维护**：
-   - `README.md` 中的 `更新日志` 链接与 `README_en.md` 中的 `Changelog` 跳转超链接必须保持正常。
-3. **发布流程（从版本指定到上线，按顺序执行）**：
-   1. 用户明确指定发布版本号（如 v1.10.1）后，AI 按第 1 条更新版本文件与 CHANGELOG，并提交推送：
-      - 提交信息遵循 `release: 发布 vX.Y.Z <主题>版本` 格式（主题概括本次版本的核心改动，如 `release: 发布 v1.10.2 工作流和文档更新版本`），正文注明本次版本更新要点与验证结果（typecheck / test / verify）。
-      - 提交前确认工作区干净或只暂存版本与 CHANGELOG 相关文件，避免混入无关改动（如格式化漂移）。
-      - 推送 `test` 分支：`git push origin test`（触发测试环境自动部署）。
-   2. 创建 PR 合并 `test` 到 `main`：
-      - 标题遵循 `release: 发布 vX.Y.Z <主题>版本` 格式（与提交信息主题一致）。
-      - 正文必须说明本次版本的更新内容：包含提交列表、关联 Issue/PR、验证结果。
-      - **Issue 默认保持 open**：发布 PR 正文不得使用 `Closes #xxx` / `Fixes #xxx` 等自动关闭关键字，除非用户明确要求关闭；关联 Issue 仅以「关联 Issue：#xxx」形式列出，由用户后续手动关闭（用户可能仍有反馈需要跟进）。
-   3. **PR 的审核与合并由用户手动完成**：AI 创建 PR 后应等待用户审核并合并，不得自行合并或使用管理员旁路合并。
-   4. 用户合并 PR 到 `main` 后（生产环境自动部署），AI 执行以下命令同步本地分支：
-
-      ```bash
-      git fetch origin && git reset --hard origin/main && git push origin test --force
-      ```
-
-      - 该操作使本地 `test` 分支与已发布的 `main` 完全一致。
-      - 若此前还有未发布的 `test` 提交，会被强制覆盖，请确认已合并完成后再执行。
+- 版本号由人类决定，不要自主递增。发布新版本时同步修改 `package.json` 与 `frontend/package.json` 中的 `"version"` 字段，两者必须保持一致。
+- 发布即推送 `main` 分支：部署工作流（`deploy.yml`）会在推送后自动执行完整质量门禁并部署生产 Worker，前提是在仓库 Secrets 中配置了 `CLOUDFLARE_API_TOKEN` 与 `CLOUDFLARE_ACCOUNT_ID`。
+- 如需先验证再上线，可先推送 `test` 分支部署到 `cloudssh-test` 预发环境，确认无误后再合入 `main`。
