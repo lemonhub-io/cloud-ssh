@@ -60,10 +60,16 @@ done
 echo "==> smoke check linux-x64 binary"
 out="$OUT_DIR/cloudssh-agent-linux-x64"
 if [ -f "$out" ]; then
-  if "$out" 2>&1 | grep -q 'Missing agent token'; then
-    echo "    smoke check ok"
+  # 先捕获输出再 grep：pipefail 下 grep -q 提前退出会让被测进程吃 SIGPIPE
+  smoke_out="$("$out" 2>&1 || true)"
+  smoke_ver="$("$out" --version 2>&1 || true)"
+  if echo "$smoke_out" | grep -q 'Missing agent token' \
+    && echo "$smoke_ver" | grep -q 'cloudssh-agent'; then
+    echo "    smoke check ok ($smoke_ver)"
   else
-    echo "    smoke check FAILED: binary did not print expected usage" >&2
+    echo "    smoke check FAILED:" >&2
+    echo "$smoke_out" >&2
+    echo "$smoke_ver" >&2
     exit 1
   fi
 fi
