@@ -321,7 +321,7 @@ pnpm run verify      # typecheck + test + build:frontend + test:e2e 完整门禁
 
 ### 分支与部署
 
-`deploy.yml` 监听 `test` 与 `main` 两个分支的推送（仅在 `vexuni` 名下的仓库启用）：
+`deploy.yml` 监听 `test` 与 `main` 两个分支的推送（仅在 `lemonhub-io` 名下的仓库启用）：
 
 | 分支 | 触发部署 | 目标 Worker |
 | ------ | --------- | ----------- |

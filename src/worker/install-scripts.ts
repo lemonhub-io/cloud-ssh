@@ -8,7 +8,7 @@
  */
 
 const AGENT_RELEASE_BASE =
-  'https://github.com/vexuni/cloud-ssh/releases/download/agent-latest';
+  'https://github.com/lemonhub-io/cloud-ssh/releases/download/agent-latest';
 
 const AGENT_ASSET_PATTERN = /^cloudssh-agent-(linux|darwin|windows)-(x64|arm64)(\.exe)?$/;
 
@@ -77,7 +77,7 @@ mkdir -p "$INSTALL_DIR" "$CONFIG_DIR"
 
 # 多镜像下载：本站代理 → GitHub 直连。
 # 体积校验挡住挑战页/错误页（CF 挑战也可能返回 200 + HTML）。
-GH_URL="https://github.com/vexuni/cloud-ssh/releases/download/agent-latest/$ASSET"
+GH_URL="https://github.com/lemonhub-io/cloud-ssh/releases/download/agent-latest/$ASSET"
 fetch() {
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL --connect-timeout 15 --max-time 600 "$1" -o "$BIN"
@@ -248,7 +248,7 @@ New-Item -ItemType Directory -Force $Dir | Out-Null
 $Asset = 'cloudssh-agent-windows-x64.exe'
 $Mirrors = @(
   "$Base/api/agent/download/$Asset",
-  "https://github.com/vexuni/cloud-ssh/releases/download/agent-latest/$Asset"
+  "https://github.com/lemonhub-io/cloud-ssh/releases/download/agent-latest/$Asset"
 )
 $ok = $false
 foreach ($u in $Mirrors) {

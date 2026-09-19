@@ -9,7 +9,7 @@ on:
 
 jobs:
   deploy:
-    if: github.repository_owner == 'vexuni'
+    if: github.repository_owner == 'lemonhub-io'
     runs-on: ubuntu-latest
     permissions:
       contents: read
