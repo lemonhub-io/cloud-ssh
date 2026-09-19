@@ -3,6 +3,12 @@ main = "src/worker/index.ts"
 compatibility_date = "2026-07-01"
 workers_dev = true
 
+# 自定义域名（Workers Custom Domain）：workers.dev 在部分网络不可用，
+# 自定义域名由 Cloudflare 自动签发证书并创建 DNS 记录
+routes = [
+  { pattern = "ssh.lemonhub.online", custom_domain = true }
+]
+
 [vars]
 DEBUG_MODE = "false"
 
