@@ -13,6 +13,7 @@
   },
   "scripts": {
     "build": "esbuild src/cli.ts --bundle --format=esm --platform=node --target=node20 --external:werift --external:ws --outfile=dist/agent.js",
+    "build:sea": "bash scripts/build-sea.sh",
     "typecheck": "tsc --noEmit",
     "start": "node dist/agent.js"
   },
@@ -25,6 +26,7 @@
     "@types/node": "^26.2.0",
     "@types/ws": "^8.18.0",
     "esbuild": "^0.25.0",
+    "postject": "^1.0.0-alpha.6",
     "typescript": "^5.7.0"
   }
 }

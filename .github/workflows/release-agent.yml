@@ -1,0 +1,53 @@
+name: Release CloudSSH Agent
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'agent/**'
+      - '.github/workflows/release-agent.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: github.repository_owner == 'vexuni'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa  # v4
+        with:
+          version: "11.8.0"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Node SEA：esbuild 全量打包为 CJS → sea blob → 注入各平台官方 node 二进制。
+      # 产物为免安装 Node 的单文件可执行文件，install.sh/install.ps1 经 Worker 代理下载。
+      - name: Build single-executable agent binaries (Node SEA)
+        run: pnpm --dir agent run build:sea
+
+      - name: Smoke test linux-x64 binary
+        run: agent/dist/sea/cloudssh-agent-linux-x64 --version
+
+      - name: Publish rolling agent-latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          gh release view agent-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create agent-latest \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "CloudSSH Agent (rolling)" \
+              --notes "Latest agent binaries built from main. Served via /api/agent/download/." \
+              --latest=false
+          cd agent/dist/sea
+          gh release upload agent-latest cloudssh-agent-* --clobber --repo "$GITHUB_REPOSITORY"

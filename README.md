@@ -205,21 +205,20 @@ TURN_EXTRA_USERNAME=cloudssh
 TURN_EXTRA_CREDENTIAL=<static secret>
 ```
 
-1. 登录后在服务器列表工具栏打开 **Agent**，创建 Agent 并**立即复制令牌**——明文只返回一次，服务端仅存哈希。
-2. 在能触达目标 SSH 主机的机器上运行（Node.js ≥ 22）：
+1. 首次连接已保存服务器时，前端会询问一次连接方式（仅一次，默认推荐中继）；也可随时在服务器列表工具栏打开 **Agent**。
+2. 在面板中创建 Agent 并**立即复制令牌**——明文只返回一次，服务端仅存哈希。令牌下方直接给出内嵌令牌与站点地址的一键安装命令：
 
    ```bash
-   cd agent && pnpm install && pnpm run build
-   node dist/cli.js \
-     --server https://<你的站点> \
-     --token <githubId>:<agentId>:<secret> \
-     --allowlist '*.corp.local,bastion.internal' \
-     --max-sessions 8
+   # Linux / macOS —— 下载免安装二进制、写入 600 权限配置、注册开机自启（systemd --user / launchd）
+   curl -fsSL https://<你的站点>/install.sh | sh -s -- --token <githubId>:<agentId>:<secret>
+
+   # Windows（PowerShell）—— 下载 exe 并注册登录计划任务
+   iex "& { $(irm https://<你的站点>/install.ps1) } -Token '<githubId>:<agentId>:<secret>'"
    ```
 
-   全部参数也可用环境变量：`AGENT_TOKEN`/`AGENT_SERVER`/`AGENT_SIGNAL_URL`/`AGENT_ALLOWLIST`/`AGENT_MAX_SESSIONS`/`AGENT_DEBUG`。
+   二进制由 CI 以 Node SEA 构建（linux/darwin/windows × x64/arm64），目标机无需 Node.js；`/api/agent/download/` 经本站代理 GitHub Release 产物，被墙区域也能完成下载。可选 `--no-service` 只前台运行、`--server` 覆盖站点地址。手动方式（Node.js ≥ 20 + 源码）：`cd agent && pnpm install && pnpm run build && node dist/agent.js --token <令牌>`，参数亦可全部走环境变量（`AGENT_TOKEN`/`AGENT_SERVER`/`AGENT_SIGNAL_URL`/`AGENT_ALLOWLIST`/`AGENT_MAX_SESSIONS`/`AGENT_DEBUG`）。
 
-3. 连接已保存服务器时选择该 Agent（默认仍为 Worker 中继）。浏览器先经 DO 信令与 Agent 完成 ICE/DTLS 握手，终端与 SFTP 随后跑在 DataChannel 上；信令超时或协商失败自动回落中继（分享链接透明降级，不消耗第二次票据）。
+3. Agent 上线后面板会询问是否切换到 P2P；也可随时在「连接传输」中手动选择（默认仍为中继）。浏览器先经 DO 信令与 Agent 完成 ICE/DTLS 握手，终端与 SFTP 随后跑在 DataChannel 上；信令超时或协商失败自动回落中继（分享链接透明降级，不消耗第二次票据）。
 
 > 注意事项：凭据解密发生在服务端，`session_init` 经信令通道下发给 Agent（与现有中继路径的信任模型一致）；P2P 分享会话的审计由 Agent 回传，属于应用层留痕；Agent 机器即新的网络信任边界，建议配合 `--allowlist` 收敛可代理的目标范围。
 

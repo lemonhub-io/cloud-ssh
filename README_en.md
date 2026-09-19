@@ -205,21 +205,20 @@ TURN_EXTRA_USERNAME=cloudssh
 TURN_EXTRA_CREDENTIAL=<static secret>
 ```
 
-1. After signing in, open **Agent** in the server-list toolbar, create an agent, and **copy the token immediately** — plaintext is returned only once; the server stores only a hash.
-2. Run the agent on a machine that can reach the SSH targets (Node.js ≥ 22):
+1. On your first saved-server connection the frontend asks once which mode to use (one time only, relay recommended); you can also open **Agent** from the server-list toolbar anytime.
+2. In the panel, create an agent and **copy the token immediately** — plaintext is returned only once; the server stores only a hash. Below the token the panel shows ready-made install commands with the token and site origin already embedded:
 
    ```bash
-   cd agent && pnpm install && pnpm run build
-   node dist/cli.js \
-     --server https://<your-site> \
-     --token <githubId>:<agentId>:<secret> \
-     --allowlist '*.corp.local,bastion.internal' \
-     --max-sessions 8
+   # Linux / macOS — downloads a self-contained binary, writes a 0600 config, registers autostart (systemd --user / launchd)
+   curl -fsSL https://<your-site>/install.sh | sh -s -- --token <githubId>:<agentId>:<secret>
+
+   # Windows (PowerShell) — downloads the exe and registers a logon scheduled task
+   iex "& { $(irm https://<your-site>/install.ps1) } -Token '<githubId>:<agentId>:<secret>'"
    ```
 
-   Every flag also has an env var: `AGENT_TOKEN`/`AGENT_SERVER`/`AGENT_SIGNAL_URL`/`AGENT_ALLOWLIST`/`AGENT_MAX_SESSIONS`/`AGENT_DEBUG`.
+   Binaries are built by CI as Node SEA executables (linux/darwin/windows × x64/arm64) — no Node.js needed on the target. `/api/agent/download/` proxies the GitHub release through this site so downloads also work where GitHub is unreachable. Optional flags: `--no-service` to skip autostart, `--server` to override the site origin. Manual path (Node.js ≥ 20 + source): `cd agent && pnpm install && pnpm run build && node dist/agent.js --token <token>`; every flag also has an env var (`AGENT_TOKEN`/`AGENT_SERVER`/`AGENT_SIGNAL_URL`/`AGENT_ALLOWLIST`/`AGENT_MAX_SESSIONS`/`AGENT_DEBUG`).
 
-3. When connecting to a saved server, pick the agent (the default stays the Worker relay). The browser completes ICE/DTLS negotiation with the agent via DO signaling, then terminal and SFTP run on DataChannels. Signaling timeouts or negotiation failures fall back to the relay automatically — share links degrade transparently without consuming a second ticket.
+3. Once the agent reports online the panel offers to switch to P2P; you can also pick it anytime under "Connection transport" (relay stays the default). The browser completes ICE/DTLS negotiation with the agent via DO signaling, then terminal and SFTP run on DataChannels. Signaling timeouts or negotiation failures fall back to the relay automatically — share links degrade transparently without consuming a second ticket.
 
 > Notes: credentials are decrypted server-side and delivered to the agent inside `session_init` over the signaling channel — the same trust model as the existing relay path. Audit for P2P share sessions is forwarded by the agent and is therefore application-level bookkeeping. The agent host is the new network trust boundary — scope it down with `--allowlist`.
 

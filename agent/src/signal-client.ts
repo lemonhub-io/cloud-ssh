@@ -1,9 +1,8 @@
 import WebSocket from 'ws';
 import { parseToAgentSignal, type ToAgentMessage } from '../../src/p2p-signaling';
-import type { AgentConfig } from './config';
+import { AGENT_VERSION, type AgentConfig } from './config';
 import type { Logger } from './log';
 
-const AGENT_VERSION = '0.1.0';
 const RECONNECT_MIN_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
 const HEARTBEAT_INTERVAL_MS = 30_000;

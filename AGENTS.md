@@ -45,6 +45,8 @@ src/
 │   ├── dns-check.ts  # DNS-over-HTTPS 解析 + 统一 IP 块检查（DNS rebinding 防重绑定 SSRF 防护）
 │   ├── ip-geo.ts     # 保存直连服务器时 IPinfo 区域推断，映射为 DO locationHint
 │   ├── turn-credentials.ts # Cloudflare Realtime TURN 短时 ICE 凭据签发（+自建 TURN 追加项）
+│   ├── install-scripts.ts  # Agent 一键安装脚本（/install.sh /install.ps1，按请求源模板化）
+│   │                       #   + /api/agent/download/ 反代 GitHub agent-latest 发布产物
 │   ├── exec-channel.ts  # SSH exec channel 生命周期与有界输出捕获（OS 检测等只读命令复用）
 │   └── html.ts       # Auto-generated - DO NOT EDIT
 ├── ssh/              # SSH protocol implementation
@@ -103,6 +105,8 @@ frontend/
 │   ├── session-transport.ts # 会话传输抽象（SessionTransportLike）：RtcTransport 信令/数据通道、
 │   │                        #   DataChannelTransport、AdoptedRelayTransport（一次性票据透明降级复用同一 WS）
 │   ├── agent-manager.ts   # Agent 偏好（连接方式选择）+ Agent 管理面板（创建/复制令牌/删除）
+│   │                      #   + 首次连接方式询问（仅一次）+ Agent 上线→P2P 切换提示
+│   │                      #   + 令牌内嵌的一键安装命令（install.sh / install.ps1）
 │   ├── public-config.ts   # /api/config 单例缓存（含 p2pEnabled 能力位）
 │   ├── snippet-manager.ts # 命令片段库面板（云端/本地双后端、参数占位符录入、搜索/复制、填入/填入并执行、编辑/删除）
 │   ├── snippet-variables.ts # 命令片段 {{var}} 参数占位符提取与安全替换纯函数
@@ -125,6 +129,8 @@ agent/                    # P2P Agent（pnpm workspace 成员，独立 tsconfig 
 │   │                     #   allowlist/端口黑名单/上限校验、断线宽限与 token 轮换、设备签名验签
 │   ├── signal-client.ts # 信令 WS 客户端（指数退避重连、心跳、hello 握手）
 │   └── callbacks.ts     # Agent→Worker 回传：分享审计 /internal/agent/audit、OS 持久化
+├── scripts/build-sea.sh # Node SEA 跨平台单文件二进制构建（esbuild CJS → blob → postject 注入官方 node）
+├── sea-config.json      # SEA blob 配置（main=dist/sea-entry.cjs）
 └── tests/               # 适配器与 werift loopback 测试（根 vitest 统一收集）
 ```
 
@@ -277,6 +283,8 @@ Required for optional features (configured in `wrangler.toml` or Cloudflare Dash
 | `/api/agents` | GET/POST | Yes | List agents or create one (per-user max 10; plaintext token returned once) |
 | `/api/agents/:id` | GET/DELETE | Yes | Read or delete an owned agent |
 | `/api/agent/ws` | WebSocket | Token | Agent signaling WS attach (token `<githubId>:<agentId>:<secret>` via `Authorization: Bearer` or `token` param) |
+| `/install.sh` `/install.ps1` | GET | No | Agent 一键安装脚本，按请求源模板化 BASE（见 `src/worker/install-scripts.ts`） |
+| `/api/agent/download/:file` | GET | No | 反代 GitHub `agent-latest` 滚动发布产物；文件名白名单 `cloudssh-agent-<os>-<arch>[.exe]` |
 | `/internal/agent/audit` | POST | Token | Agent → ShareDO audit + session-close forwarding (`/internal/session/closed`) |
 | `/internal/agent/os` | POST | Token | Agent → UserDBDO OS-detection result persistence |
 | `/api/verify` | POST | No | Turnstile bot verification |
@@ -315,6 +323,8 @@ pnpm run verify      # typecheck + test + build:frontend + test:e2e 完整门禁
 | `test` | ✅ | `cloudssh-test`（可选的预发环境） |
 
 日常开发直接推送到 `main`；如需隔离的预发环境，可使用 `test` 分支触发 `cloudssh-test` 部署，两个环境的 Durable Objects 数据完全隔离。
+
+`release-agent.yml` 在 `agent/**` 变更或手动触发时构建 Node SEA 单文件 Agent 二进制（linux/darwin/windows × x64/arm64），上传至滚动发布 `agent-latest`；Worker 的 `/api/agent/download/:file` 反代该发布供 `install.sh`/`install.ps1` 下载。TURN_API_TOKEN 等 Worker 密钥经 deploy.yml 中的 `wrangler secret put` 步骤由 GitHub Secrets 同步，不落源码。
 
 ### 提交信息规范
 

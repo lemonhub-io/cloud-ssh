@@ -15,11 +15,28 @@ Browser ── RTCDataChannel (ssh / sftp) ──► Agent ── net.connect �
 - 数据通道：`ssh` DataChannel 承载终端控制帧 + 二进制流；`sftp` DataChannel 承载 SFTP 子系统。
 - SSH 协议栈复用 Worker 同一份 `src/ssh/*` 与 `SSHSession`，跳板链、主机指纹校验、keyboard-interactive、断线恢复语义与中继路径一致。
 
-## 运行
+## 一键安装（推荐）
+
+在 Web 端 **Agent** 面板创建 Agent 后，令牌下方直接给出内嵌令牌与站点地址的成品命令：
+
+```bash
+# Linux / macOS —— 免安装二进制 + 600 权限配置 + 开机自启（systemd --user / launchd）
+curl -fsSL https://ssh.lemonhub.online/install.sh | sh -s -- --token <githubId>:<agentId>:<secret>
+
+# Windows（PowerShell）—— exe + 登录计划任务
+iex "& { $(irm https://ssh.lemonhub.online/install.ps1) } -Token '<githubId>:<agentId>:<secret>'"
+```
+
+- 二进制为 Node SEA 单文件可执行文件（linux/darwin/windows × x64/arm64），**目标机无需 Node.js**。
+- 下载走 `https://<site>/api/agent/download/<asset>` 反向代理 GitHub Release `agent-latest`，被墙区域可用。
+- 凭据写入 `~/.config/cloudssh-agent/agent.env`（0600）而非命令行；`--no-service` 可跳过自启、直接前台运行；`--server` 覆盖站点地址。
+- 二进制由 `.github/workflows/release-agent.yml` 在 `agent/**` 变更时自动构建（`agent/scripts/build-sea.sh`：esbuild 全量 CJS 打包 → sea blob → postject 注入各平台官方 node 二进制）。
+
+## 手动运行（源码）
 
 ```bash
 pnpm install && pnpm run build
-node dist/cli.js \
+node dist/agent.js \
   --server https://ssh.lemonhub.online \
   --token <githubId>:<agentId>:<secret> \
   --allowlist '*.corp.local,bastion.internal' \
@@ -51,6 +68,7 @@ node dist/cli.js \
 
 ```bash
 pnpm --dir agent exec tsc --noEmit   # 类型检查
-pnpm --dir agent run build           # esbuild 打包 → dist/cli.js
+pnpm --dir agent run build           # esbuild 打包 → dist/agent.js
+pnpm --dir agent run build:sea       # Node SEA 跨平台单文件二进制 → dist/sea/
 pnpm test                            # 根 vitest 会跑 agent/tests（含 werift loopback）
 ```

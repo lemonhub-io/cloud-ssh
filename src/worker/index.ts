@@ -12,6 +12,7 @@ import {
   isGitHubUserAllowed,
 } from './auth';
 import { HTML } from './html';
+import { handleAgentDownload, installScriptResponse } from './install-scripts';
 
 export { SSHSessionDO } from './durable-object';
 export { SSHShareDO } from './share-do';
@@ -407,6 +408,17 @@ export default {
 
       if (url.pathname === '/api/health') {
         return Response.json({ status: 'ok', timestamp: Date.now() });
+      }
+
+      // Agent 一键安装脚本与免安装二进制分发（公开，无需登录）
+      if (url.pathname === '/install.sh') {
+        return installScriptResponse(request, 'sh');
+      }
+      if (url.pathname === '/install.ps1') {
+        return installScriptResponse(request, 'ps1');
+      }
+      if (url.pathname.startsWith('/api/agent/download/')) {
+        return handleAgentDownload(url);
       }
 
       // Return config info (includes GitHub auth availability)

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { ConfigError, resolveConfig, type AgentConfigInput } from './config';
+import { AGENT_VERSION, ConfigError, resolveConfig, type AgentConfigInput } from './config';
 import { Logger } from './log';
 import { SessionRunner } from './session-runner';
 import { SignalClient } from './signal-client';
@@ -16,10 +16,11 @@ Options:
   --allowlist <hosts>   Comma-separated SSH target allowlist, *.domain.com wildcards (or AGENT_ALLOWLIST)
   --max-sessions <n>    Max concurrent sessions (default: 8, or AGENT_MAX_SESSIONS)
   --debug               Verbose logging (or AGENT_DEBUG=1)
+  -v, --version         Show version
   -h, --help            Show this help
 `;
 
-function parseArgs(argv: string[]): AgentConfigInput | 'help' {
+function parseArgs(argv: string[]): AgentConfigInput | 'help' | 'version' {
   const input: AgentConfigInput = {};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -28,6 +29,9 @@ function parseArgs(argv: string[]): AgentConfigInput | 'help' {
       case '-h':
       case '--help':
         return 'help';
+      case '-v':
+      case '--version':
+        return 'version';
       case '--server':
         input.server = next();
         break;
@@ -62,6 +66,10 @@ async function main(): Promise<void> {
   const parsed = parseArgs(process.argv.slice(2));
   if (parsed === 'help') {
     console.log(USAGE);
+    return;
+  }
+  if (parsed === 'version') {
+    console.log(`cloudssh-agent ${AGENT_VERSION}`);
     return;
   }
   const config = resolveConfig(parsed);

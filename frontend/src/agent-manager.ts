@@ -17,6 +17,10 @@ export type ConnectMode = 'relay' | 'p2p';
 
 const MODE_KEY = 'cloudssh.p2p.mode';
 const AGENT_KEY = 'cloudssh.p2p.agentId';
+/** 首次连接前的连接方式询问只做一次；此后走 Agent 面板偏好。 */
+const ASKED_KEY = 'cloudssh.p2p.asked';
+/** Agent 上线后提示切换 P2P，用户拒绝过则不再打扰。 */
+const SWITCH_DECLINED_KEY = 'cloudssh.p2p.switchDeclined';
 /** Agent 心跳节流 60s：超过该窗口未见心跳视为离线（UI 提示口径）。 */
 const ONLINE_WINDOW_MS = 150_000;
 
@@ -50,6 +54,84 @@ export function setP2PPreference(pref: P2PPreference): void {
 
 export function isAgentOnline(agent: AgentSummary): boolean {
   return typeof agent.last_seen_at === 'number' && Date.now() - agent.last_seen_at < ONLINE_WINDOW_MS;
+}
+
+function switchDeclined(): boolean {
+  try {
+    return localStorage.getItem(SWITCH_DECLINED_KEY) === '1';
+  } catch {
+    return true;
+  }
+}
+
+function markSwitchDeclined(): void {
+  try {
+    localStorage.setItem(SWITCH_DECLINED_KEY, '1');
+  } catch {
+    /* 忽略 */
+  }
+}
+
+function markConnectModeAsked(): void {
+  try {
+    localStorage.setItem(ASKED_KEY, '1');
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/**
+ * 首次连接前的连接方式询问（仅一次）：
+ * - 默认推荐中继（即开即用），主按钮聚焦中继；
+ * - 选择安装 Agent 时打开管理面板，本次连接仍走中继（Agent 尚未上线）。
+ * 调用方须先确认 p2pEnabled 且用户已登录（匿名无 Agent 注册能力）。
+ */
+export function promptConnectModeOnce(): Promise<void> {
+  try {
+    if (localStorage.getItem(ASKED_KEY) === '1') return Promise.resolve();
+  } catch {
+    return Promise.resolve();
+  }
+  markConnectModeAsked();
+
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className =
+      'responsive-modal fixed inset-0 z-[130] flex items-center justify-center';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    // pi-lens-ignore: no-inner-html
+    overlay.innerHTML = `
+      <div class="modal-overlay absolute inset-0"></div>
+      <div class="cyber-box p-6 shadow-2xl relative z-10 w-full max-w-md mx-4">
+        <h2 class="text-sm font-bold text-primary mb-2">${t('agent.firstPromptTitle')}</h2>
+        <p class="text-xs text-muted leading-relaxed mb-5">${t('agent.firstPromptDesc')}</p>
+        <div class="flex flex-col gap-2">
+          <button type="button" data-mode-relay class="cyber-button text-primary px-4 py-2.5 text-xs font-bold w-full">${t('agent.firstPromptRelay')}</button>
+          <button type="button" data-mode-agent class="cyber-button text-muted px-4 py-2 text-xs w-full">${t('agent.firstPromptInstall')}</button>
+        </div>
+      </div>
+    `;
+    const done = (install: boolean) => {
+      overlay.remove();
+      if (install) void new AgentManager().open();
+      resolve();
+    };
+    overlay.querySelector('[data-mode-relay]')?.addEventListener('click', () => done(false));
+    overlay.querySelector('[data-mode-agent]')?.addEventListener('click', () => done(true));
+    document.body.appendChild(overlay);
+    (overlay.querySelector('[data-mode-relay]') as HTMLButtonElement | null)?.focus();
+  });
+}
+
+/** 生成内嵌 token 与站点源的一键安装命令（Linux/macOS、Windows、手动 Node）。 */
+function installCommands(token: string): { unix: string; windows: string; manual: string } {
+  const base = window.location.origin;
+  return {
+    unix: `curl -fsSL ${base}/install.sh | sh -s -- --token ${token}`,
+    windows: `iex "& { $(irm ${base}/install.ps1) } -Token '${token}'"`,
+    manual: `node agent/dist/agent.js --token ${token}`,
+  };
 }
 
 function escapeHtml(value: string): string {
@@ -133,7 +215,33 @@ export class AgentManager {
             <div class="flex gap-2 mt-2">
               <button id="agent-token-copy" type="button" class="cyber-button text-primary px-3 py-1.5 text-xs">${t('agent.copyToken')}</button>
             </div>
-            <p class="text-xs text-muted mt-2">${t('agent.runHint')}</p>
+            <div class="mt-3">
+              <p class="text-xs font-bold text-on-surface mb-1">${t('agent.installTitle')}</p>
+              <p class="text-xs text-muted mb-2">${t('agent.installHint')}</p>
+              <div class="space-y-2">
+                <div>
+                  <p class="text-xs text-muted mb-1">${t('agent.installUnix')}</p>
+                  <div class="flex items-start gap-1.5">
+                    <code id="agent-install-unix" class="flex-1 text-xs break-all text-on-surface bg-black/30 p-2 rounded select-all"></code>
+                    <button type="button" data-copy-install="unix" class="panel-close-btn shrink-0" aria-label="${t('agent.copyInstall')}"><span class="material-symbols-outlined" style="font-size: 16px">content_copy</span></button>
+                  </div>
+                </div>
+                <div>
+                  <p class="text-xs text-muted mb-1">${t('agent.installWindows')}</p>
+                  <div class="flex items-start gap-1.5">
+                    <code id="agent-install-windows" class="flex-1 text-xs break-all text-on-surface bg-black/30 p-2 rounded select-all"></code>
+                    <button type="button" data-copy-install="windows" class="panel-close-btn shrink-0" aria-label="${t('agent.copyInstall')}"><span class="material-symbols-outlined" style="font-size: 16px">content_copy</span></button>
+                  </div>
+                </div>
+                <div>
+                  <p class="text-xs text-muted mb-1">${t('agent.installManual')}</p>
+                  <div class="flex items-start gap-1.5">
+                    <code id="agent-install-manual" class="flex-1 text-xs break-all text-on-surface bg-black/30 p-2 rounded select-all"></code>
+                    <button type="button" data-copy-install="manual" class="panel-close-btn shrink-0" aria-label="${t('agent.copyInstall')}"><span class="material-symbols-outlined" style="font-size: 16px">content_copy</span></button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -155,6 +263,15 @@ export class AgentManager {
       const value = document.getElementById('agent-token-value')?.textContent ?? '';
       void copyTextToClipboard(value).then((ok) => {
         if (ok) notify(t('agent.tokenCopied'), { variant: 'success' });
+      });
+    });
+    modal.querySelectorAll('[data-copy-install]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const kind = (el as HTMLElement).dataset.copyInstall ?? '';
+        const value = document.getElementById(`agent-install-${kind}`)?.textContent ?? '';
+        void copyTextToClipboard(value).then((ok) => {
+          if (ok) notify(t('agent.installCopied'), { variant: 'success' });
+        });
       });
     });
     document.getElementById('agent-mode-select')?.addEventListener('change', (e) => {
@@ -216,6 +333,29 @@ export class AgentManager {
     }
     this.renderAgents();
     this.renderPreference();
+    this.maybePromptP2PSwitch();
+  }
+
+  /** Agent 首次上线时询问是否把连接方式切到 P2P；拒绝一次后不再打扰。 */
+  private maybePromptP2PSwitch(): void {
+    if (this.pref.mode !== 'relay' || switchDeclined()) return;
+    const online = this.agents.find(isAgentOnline);
+    if (!online) return;
+    void confirmAction({
+      title: t('agent.switchTitle'),
+      message: t('agent.switchPrompt'),
+      confirmText: t('agent.modeP2p'),
+      variant: 'info',
+    }).then((confirmed) => {
+      if (confirmed) {
+        this.pref = { mode: 'p2p', agentId: this.pref.agentId ?? online.id };
+        setP2PPreference(this.pref);
+        this.renderPreference();
+        notify(t('agent.switched'), { variant: 'success' });
+      } else {
+        markSwitchDeclined();
+      }
+    });
   }
 
   private renderAgents(): void {
@@ -277,6 +417,14 @@ export class AgentManager {
       const tokenBox = document.getElementById('agent-token-box');
       const tokenValue = document.getElementById('agent-token-value');
       if (tokenValue) tokenValue.textContent = body.token;
+      // 填充一键安装命令：token 与站点源已内嵌，用户复制粘贴一条即可
+      const commands = installCommands(body.token);
+      const unixEl = document.getElementById('agent-install-unix');
+      const winEl = document.getElementById('agent-install-windows');
+      const manEl = document.getElementById('agent-install-manual');
+      if (unixEl) unixEl.textContent = commands.unix;
+      if (winEl) winEl.textContent = commands.windows;
+      if (manEl) manEl.textContent = commands.manual;
       tokenBox?.classList.remove('hidden');
       // 新建 Agent 自动成为首选（用户刚创建它就是要用）
       if (body.id) {

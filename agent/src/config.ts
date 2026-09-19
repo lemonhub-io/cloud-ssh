@@ -1,7 +1,10 @@
 /**
  * Agent 运行配置：全部经环境变量/CLI 注入，不落盘任何凭据。
  * Token 形态 <githubId>:<agentId>:<secret>，由 Web 端创建时一次性返回。
+ * AGENT_VERSION：上报至信令通道与 --version 输出的统一版本号。
  */
+export const AGENT_VERSION = '0.1.0';
+
 export interface AgentConfig {
   /** wss://<host>/api/agent/ws 信令地址（自动由 --server 推导） */
   signalUrl: string;

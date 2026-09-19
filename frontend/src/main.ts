@@ -1,4 +1,4 @@
-import { getP2PPreference } from './agent-manager';
+import { getP2PPreference, promptConnectModeOnce } from './agent-manager';
 import { ConnectionForm } from './auth-form';
 import { initI18n, onLocaleChange, t } from './i18n';
 import { MobileTerminalController } from './mobile-terminal';
@@ -387,8 +387,11 @@ async function showTerminalFromServer(
 
   // P2P 偏好生效时把一次性连接 URL 升级为信令地址；信令失败经重新铸 token 回退中继
   const serverId = hostInfo?.serverId;
-  const pref = getP2PPreference();
   const p2pEnabled = (await getPublicConfig())?.p2pEnabled === true;
+  // 首次连接前询问一次连接方式（登录用户且 P2P 开放时）；
+  // 选安装则打开 Agent 面板，本次仍走中继（Agent 尚未上线）
+  if (p2pEnabled) await promptConnectModeOnce();
+  const pref = getP2PPreference();
   const wantP2P = p2pEnabled && pref.mode === 'p2p';
   const targetUrl = wantP2P ? appendP2PParams(wsUrl, pref.agentId) : wsUrl;
 
@@ -467,8 +470,9 @@ async function fetchSavedServerWsUrl(serverId: number): Promise<string> {
  */
 async function requestSavedServerChannel(serverId: number): Promise<SessionTransportLike> {
   const wsUrl = await fetchSavedServerWsUrl(serverId);
-  const pref = getP2PPreference();
   const p2pEnabled = (await getPublicConfig())?.p2pEnabled === true;
+  if (p2pEnabled) await promptConnectModeOnce();
+  const pref = getP2PPreference();
   if (!p2pEnabled || pref.mode !== 'p2p') {
     const socket = new WebSocket(wsUrl);
     socket.binaryType = 'arraybuffer';
