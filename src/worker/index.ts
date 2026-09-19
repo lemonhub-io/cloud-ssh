@@ -586,6 +586,27 @@ async function handleServersRoute(request: Request, url: URL, env: Env): Promise
     return new Response('Method Not Allowed', { status: 405 });
   }
 
+  // /api/servers/:id/agent —— 绑定/解绑前置 P2P Agent（agent_loopback 表示装在目标机上）
+  const agentBindMatch = url.pathname.match(/^\/api\/servers\/(\d+)\/agent$/);
+  if (agentBindMatch) {
+    if (!isP2PEnabled(env)) {
+      return Response.json({ error: 'P2P mode is disabled' }, { status: 404 });
+    }
+    if (request.method !== 'PUT') return new Response('Method Not Allowed', { status: 405 });
+    const body = await request.json<{ agent_id?: unknown; agent_loopback?: unknown }>();
+    return stub.fetch(
+      new Request(`http://internal/internal/servers/${agentBindMatch[1]}/agent`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: user.id,
+          agent_id: typeof body.agent_id === 'string' ? body.agent_id : null,
+          agent_loopback: body.agent_loopback === true,
+        }),
+      })
+    );
+  }
+
   // /api/servers/:id/memory
   const memoryMatch = url.pathname.match(/^\/api\/servers\/(\d+)\/memory$/);
   if (memoryMatch) {
@@ -1233,12 +1254,13 @@ async function handleTokenSSHConnection(
     );
   }
 
-  // P2P 模式：Agent 归属与在线校验通过后走信令挂载，由 DataChannel 承载会话
+  // P2P 模式：Agent 归属与在线校验通过后走信令挂载，由 DataChannel 承载会话。
+  // agent_id 缺省时回落到服务器已绑定的 Agent（引导绑定后无需前端显式指定）。
   if (url.searchParams.get('mode') === 'p2p') {
     if (!isP2PEnabled(env)) {
       return Response.json({ error: 'P2P mode is disabled' }, { status: 404 });
     }
-    const agentId = url.searchParams.get('agent_id') || '';
+    const agentId = url.searchParams.get('agent_id') || config.agentId || '';
     if (!isValidAgentId(agentId)) {
       return Response.json({ error: 'Missing or invalid agent_id' }, { status: 400 });
     }
@@ -1540,6 +1562,13 @@ async function forwardP2PSignalAttach(
   agentId: string,
   sessionName?: string
 ): Promise<Response> {
+  // Agent 就装在目标机上时，把 SSH 目标改写为回环地址——公网主机名在
+  // NAT/发夹路由下可能无法从本机自连，127.0.0.1 恒可达。仅当请求的 Agent
+  // 正是服务器绑定的回环 Agent 时才改写（用户改选其它在线 Agent 不适用）。
+  // 跳板链同时失效：跳板是为「从 Cloudflare 到目标」铺路，Agent 已在目标上。
+  if (config.agentLoopback && config.agentId === agentId) {
+    config = { ...config, host: '127.0.0.1', jumpHosts: [] };
+  }
   const name = sessionName ?? `session:${Date.now()}:${crypto.randomUUID()}`;
   const doId = env.SSH_SESSION.idFromName(name);
   const hint = validateRegion(config.locationHint);

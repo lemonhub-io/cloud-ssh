@@ -25,17 +25,22 @@ BASE="__BASE__"
 WDD="__WDD__"
 TOKEN=""
 SERVER=""
+SYSTEM=0
 NO_SERVICE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --token) TOKEN="$2"; shift 2 ;;
     --token=*) TOKEN="\${1#*=}"; shift ;;
+    --token-file) TOKEN="$(cat "$2" 2>/dev/null)"; shift 2 ;;
+    --token-file=*) TOKEN="$(cat "\${1#*=}" 2>/dev/null)"; shift ;;
     --server) SERVER="$2"; shift 2 ;;
     --server=*) SERVER="\${1#*=}"; shift ;;
+    --system) SYSTEM=1; shift ;;
     --no-service) NO_SERVICE=1; shift ;;
     -h|--help)
-      echo "usage: install.sh --token <githubId>:<agentId>:<secret> [--server <origin>] [--no-service]"
+      echo "usage: install.sh --token <githubId>:<agentId>:<secret> [--server <origin>] [--system] [--no-service]"
+      echo "       (or --token-file <path> to read the token from a file instead of argv)"
       exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -59,8 +64,15 @@ case "$ARCH" in
 esac
 
 ASSET="cloudssh-agent-\${ASSET_OS}-\${ASSET_ARCH}"
-INSTALL_DIR="\${CLOUDSSH_AGENT_DIR:-$HOME/.local/bin}"
-CONFIG_DIR="\${XDG_CONFIG_HOME:-$HOME/.config}/cloudssh-agent"
+if [ "$SYSTEM" = 1 ]; then
+  # 系统级安装（经 sudo 以 root 运行）：全局路径 + 系统 systemd 单元
+  [ "$(id -u)" = 0 ] || { echo "error: --system requires root (run via sudo)" >&2; exit 1; }
+  INSTALL_DIR="\${CLOUDSSH_AGENT_DIR:-/usr/local/bin}"
+  CONFIG_DIR="/etc/cloudssh-agent"
+else
+  INSTALL_DIR="\${CLOUDSSH_AGENT_DIR:-$HOME/.local/bin}"
+  CONFIG_DIR="\${XDG_CONFIG_HOME:-$HOME/.config}/cloudssh-agent"
+fi
 BIN="$INSTALL_DIR/cloudssh-agent"
 ENV_FILE="$CONFIG_DIR/agent.env"
 
@@ -113,6 +125,35 @@ start_now() {
     return 0
   fi
   return 1
+}
+
+install_systemd_system() {
+  [ "$SYSTEM" = 1 ] || return 1
+  command -v systemctl >/dev/null 2>&1 || return 1
+  cat > /etc/systemd/system/cloudssh-agent.service <<EOF
+[Unit]
+Description=CloudSSH P2P Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=$ENV_FILE
+ExecStart=$BIN
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload 2>/dev/null || return 1
+  systemctl enable --now cloudssh-agent 2>/dev/null || return 1
+  echo "==> systemd system service installed and started (cloudssh-agent)"
+  echo "    status: systemctl status cloudssh-agent"
+  return 0
 }
 
 install_systemd() {
@@ -169,7 +210,9 @@ EOF
 }
 
 if [ "$NO_SERVICE" = 0 ]; then
-  if install_systemd; then :;
+  if [ "$SYSTEM" = 1 ]; then
+    install_systemd_system || { echo "==> systemd unavailable; agent will run in foreground mode" >&2; NO_SERVICE=1; }
+  elif install_systemd; then :;
   elif install_launchd; then :;
   else
     NO_SERVICE=1

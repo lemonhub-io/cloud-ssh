@@ -205,20 +205,27 @@ TURN_EXTRA_USERNAME=cloudssh
 TURN_EXTRA_CREDENTIAL=<static secret>
 ```
 
-1. 首次连接已保存服务器时，前端会询问一次连接方式（仅一次，默认推荐中继）；也可随时在服务器列表工具栏打开 **Agent**。
-2. 在面板中创建 Agent 并**立即复制令牌**——明文只返回一次，服务端仅存哈希。令牌下方直接给出内嵌令牌与站点地址的一键安装命令：
+**推荐路径——免手动安装（bootstrap）**：按常规方式用中继连接一台已保存的 Linux/macOS 服务器后，前端会自动探测目标机上的 Agent：
 
-   ```bash
-   # Linux / macOS —— 下载免安装二进制、写入 600 权限配置、注册开机自启（systemd --user / launchd）
-   curl -fsSL https://<你的站点>/install.sh | sh -s -- --token <githubId>:<agentId>:<secret>
+- **已安装且运行中** → 自动绑定该服务器并切换 P2P（无需操作）；
+- **已安装未运行** → 询问是否远端启动（systemd 系统服务需 sudo 密码）；
+- **未安装** → 询问是否安装：用户级（免 sudo，`~/.local/bin` + `systemd --user`/launchd 自启）或系统级（sudo，`/usr/local/bin` + 系统 unit）。同意后自动创建 Agent、经当前 SSH 会话下发安装命令、等待上线、绑定并切换 P2P。
 
-   # Windows（PowerShell）—— 下载 exe 并注册登录计划任务
-   iex "& { $(irm https://<你的站点>/install.ps1) } -Token '<githubId>:<agentId>:<secret>'"
-   ```
+全程秘密安全：Agent 令牌与 sudo 密码只经 SSH exec stdin 传输，不出现在远端命令行/`ps`；任何一步拒绝或失败都保持中继，中继此后只承担引导与兜底。此后连接该服务器自动走 P2P（Agent 与目标同机时目标改写 `127.0.0.1`）。
 
-   二进制由 CI 以 Node SEA 构建（linux/darwin/windows × x64/arm64），目标机无需 Node.js。下载走多镜像回退：本站代理 → workers.dev 代理 → GitHub 直连，被墙或机房网络都能完成下载。**Agent 回连（信令 WS + 审计/OS 回传）默认指向 workers.dev 源**——自定义域名可能对机房 IP 弹出 CF 托管挑战（403），workers.dev 不经挑战；若取脚本本身被拦，可将命令中的域名换成 workers.dev 地址。可选 `--no-service` 只前台运行、`--server` 显式覆盖回连源。手动方式（Node.js ≥ 20 + 源码）：`cd agent && pnpm install && pnpm run build && node dist/agent.js --token <令牌>`，参数亦可全部走环境变量（`AGENT_TOKEN`/`AGENT_SERVER`/`AGENT_SIGNAL_URL`/`AGENT_ALLOWLIST`/`AGENT_MAX_SESSIONS`/`AGENT_DEBUG`）。
+**手动路径（网关/其他机器安装）**：想把 Agent 装在与 SSH 目标不同的机器上做内网网关时，在服务器列表工具栏打开 **Agent** 面板创建并**立即复制令牌**（明文只返回一次，服务端仅存哈希），令牌下方给出内嵌令牌与站点地址的一键安装命令：
 
-3. Agent 上线后面板会询问是否切换到 P2P；也可随时在「连接传输」中手动选择（默认仍为中继）。浏览器先经 DO 信令与 Agent 完成 ICE/DTLS 握手，终端与 SFTP 随后跑在 DataChannel 上；信令超时或协商失败自动回落中继（分享链接透明降级，不消耗第二次票据）。
+```bash
+# Linux / macOS —— 下载免安装二进制、写入 600 权限配置、注册开机自启（systemd --user / launchd）
+curl -fsSL https://<你的站点>/install.sh | sh -s -- --token <githubId>:<agentId>:<secret>
+
+# Windows（PowerShell）—— 下载 exe 并注册登录计划任务
+iex "& { $(irm https://<你的站点>/install.ps1) } -Token '<githubId>:<agentId>:<secret>'"
+```
+
+二进制由 CI 以 Node SEA 构建（linux/darwin/windows × x64/arm64），目标机无需 Node.js。下载走多镜像回退：本站代理 → workers.dev 代理 → GitHub 直连，被墙或机房网络都能完成下载。**Agent 回连（信令 WS + 审计/OS 回传）默认指向 workers.dev 源**——自定义域名可能对机房 IP 弹出 CF 托管挑战（403），workers.dev 不经挑战；若取脚本本身被拦，可将命令中的域名换成 workers.dev 地址。可选 `--system`（root 路径 + 系统 unit）、`--no-service` 只前台运行、`--server` 显式覆盖回连源。手动方式（Node.js ≥ 20 + 源码）：`cd agent && pnpm install && pnpm run build && node dist/agent.js --token <令牌>`，参数亦可全部走环境变量（`AGENT_TOKEN`/`AGENT_SERVER`/`AGENT_SIGNAL_URL`/`AGENT_ALLOWLIST`/`AGENT_MAX_SESSIONS`/`AGENT_DEBUG`）。
+
+Agent 上线后面板会询问是否切换到 P2P；也可随时在「连接传输」中手动选择（默认仍为中继）。浏览器先经 DO 信令与 Agent 完成 ICE/DTLS 握手，终端与 SFTP 随后跑在 DataChannel 上；信令超时或协商失败自动回落中继（分享链接透明降级，不消耗第二次票据）。
 
 > 注意事项：凭据解密发生在服务端，`session_init` 经信令通道下发给 Agent（与现有中继路径的信任模型一致）；P2P 分享会话的审计由 Agent 回传，属于应用层留痕；Agent 机器即新的网络信任边界，建议配合 `--allowlist` 收敛可代理的目标范围。
 

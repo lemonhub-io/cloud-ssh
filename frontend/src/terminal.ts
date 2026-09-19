@@ -164,7 +164,9 @@ export class SSHTerminal {
   private restoreCursorBlinkAfterReturnPrompt: boolean = false;
   private onSessionClosed?: (event: SessionCloseInfo, willReconnect: boolean) => void;
   private onSessionReady?: () => void;
+  private onAgentBootstrapReady?: () => void;
   private onOSDetectedHandler?: (serverId: number, os: string) => void;
+  private bootstrapHandler?: (msg: Record<string, unknown>) => void;
   private sftpAttachUrl: string | null = null;
   private searchBox: HTMLElement | null = null;
   private searchInput: HTMLInputElement | null = null;
@@ -395,8 +397,45 @@ export class SSHTerminal {
     this.onSessionReady = handler;
   }
 
+  /**
+   * Agent 引导的就绪钩子（独立于 onSessionReady——后者归 TabManager 做
+   * SFTP 初始化；两个槽位在 shell_ready/session_resumed 时都会触发）。
+   */
+  setAgentBootstrapReadyHandler(handler: (() => void) | undefined): void {
+    this.onAgentBootstrapReady = handler;
+  }
+
   setOSDetectedHandler(handler: (serverId: number, os: string) => void): void {
     this.onOSDetectedHandler = handler;
+  }
+
+  /**
+   * Agent 引导控制通道：bootstrap 编排器在中继会话就绪后挂载，
+   * 接管 agent_*_result 控制帧并向服务端回发 agent_probe/install/start。
+   */
+  setBootstrapHandler(handler: ((msg: Record<string, unknown>) => void) | undefined): void {
+    this.bootstrapHandler = handler;
+  }
+
+  /** 发送一条 JSON 控制帧；会话未就绪或通道已关闭时返回 false。 */
+  sendControlMessage(payload: Record<string, unknown>): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    try {
+      this.ws.send(JSON.stringify(payload));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 当前会话是否运行在 P2P DataChannel 上（bootstrap 只在中继会话上跑）。 */
+  isP2P(): boolean {
+    return this.isP2PConnection;
+  }
+
+  /** 向终端写一行引导状态文本（青色提示，不污染远端输出流）。 */
+  writeBootstrapStatus(text: string): void {
+    this.terminal.writeln(`\x1b[36m[agent] ${text}\x1b[0m`);
   }
 
   /** 通过与物理键盘相同的 trzsz 输入管线发送移动端快捷键。 */
@@ -1075,6 +1114,15 @@ export class SSHTerminal {
             return;
           }
 
+          if (
+            msg.type === 'agent_probe_result' ||
+            msg.type === 'agent_install_result' ||
+            msg.type === 'agent_start_result'
+          ) {
+            this.bootstrapHandler?.(msg);
+            return;
+          }
+
           if (msg.type === 'sftp_attach') {
             this.sftpAttachUrl = msg.url || null;
             return;
@@ -1111,6 +1159,7 @@ export class SSHTerminal {
                 t('terminal.connected')
               );
             this.onSessionReady?.();
+            this.onAgentBootstrapReady?.();
             this.startHeartbeat();
             return;
           }
@@ -1127,6 +1176,7 @@ export class SSHTerminal {
                 this.sessionReady = true;
                 this.reconnectAttempts = 0;
                 this.onSessionReady?.();
+                this.onAgentBootstrapReady?.();
               }
               break;
             case 'error':

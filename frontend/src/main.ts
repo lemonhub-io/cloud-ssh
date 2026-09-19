@@ -1,4 +1,5 @@
-import { getP2PPreference, promptConnectModeOnce } from './agent-manager';
+import { getP2PPreference } from './agent-manager';
+import { runAgentBootstrap } from './agent-bootstrap';
 import { ConnectionForm } from './auth-form';
 import { initI18n, onLocaleChange, t } from './i18n';
 import { MobileTerminalController } from './mobile-terminal';
@@ -111,6 +112,7 @@ function getTabManager(): TabManager {
         const { terminal } = showTerminalWithNewTab(tab.label, tab.hostInfo);
         terminal.mount();
         const reconnectFactory = () => requestSavedServerChannel(serverId);
+        wireAgentBootstrap(terminal, serverId, tab.hostInfo, reconnectFactory);
         terminal.connectWithWebSocket(ws, tab.hostInfo, { reconnectFactory });
       } catch (e) {
         notify(e instanceof Error ? e.message : String(e), { variant: 'danger' });
@@ -385,15 +387,16 @@ async function showTerminalFromServer(
 
   terminal.mount();
 
-  // P2P 偏好生效时把一次性连接 URL 升级为信令地址；信令失败经重新铸 token 回退中继
+  // 传输选择：服务器已绑定 Agent → 走 P2P（目标 Agent 即绑定 Agent）；
+  // 未绑定但用户选了全局 P2P 偏好 → 走偏好 Agent；否则中继。
+  // 信令失败经重新铸 token 回退中继。
   const serverId = hostInfo?.serverId;
+  const server = serverId ? serverList?.getServer(serverId) : undefined;
   const p2pEnabled = (await getPublicConfig())?.p2pEnabled === true;
-  // 首次连接前询问一次连接方式（登录用户且 P2P 开放时）；
-  // 选安装则打开 Agent 面板，本次仍走中继（Agent 尚未上线）
-  if (p2pEnabled) await promptConnectModeOnce();
   const pref = getP2PPreference();
-  const wantP2P = p2pEnabled && pref.mode === 'p2p';
-  const targetUrl = wantP2P ? appendP2PParams(wsUrl, pref.agentId) : wsUrl;
+  const boundAgent = server?.agent_id || null;
+  const wantP2P = p2pEnabled && (boundAgent !== null || pref.mode === 'p2p');
+  const targetUrl = wantP2P ? appendP2PParams(wsUrl, boundAgent ?? pref.agentId) : wsUrl;
 
   let transport: SessionTransportLike;
   try {
@@ -412,6 +415,7 @@ async function showTerminalFromServer(
   const reconnectFactory = serverId
     ? () => requestSavedServerChannel(serverId)
     : undefined;
+  wireAgentBootstrap(terminal, serverId, hostInfo, reconnectFactory);
   terminal.connectWithWebSocket(transport, hostInfo, { reconnectFactory });
 }
 
@@ -465,22 +469,81 @@ async function fetchSavedServerWsUrl(serverId: number): Promise<string> {
 }
 
 /**
- * 打开已保存服务器的会话传输：P2P 偏好生效时先走 RTC 信令；
+ * 打开已保存服务器的会话传输：已绑定 Agent 的服务器走 P2P 信令；
+ * 未绑定但用户有全局 P2P 偏好时走偏好 Agent；其余中继。
  * token 在首次升级即被消费，信令失败时重新铸 token 回退中继。
  */
 async function requestSavedServerChannel(serverId: number): Promise<SessionTransportLike> {
   const wsUrl = await fetchSavedServerWsUrl(serverId);
   const p2pEnabled = (await getPublicConfig())?.p2pEnabled === true;
-  if (p2pEnabled) await promptConnectModeOnce();
   const pref = getP2PPreference();
-  if (!p2pEnabled || pref.mode !== 'p2p') {
+  const boundAgent = serverList?.getServer(serverId)?.agent_id || null;
+  const wantP2P = p2pEnabled && (boundAgent !== null || pref.mode === 'p2p');
+  if (!wantP2P) {
     const socket = new WebSocket(wsUrl);
     socket.binaryType = 'arraybuffer';
     return socket;
   }
-  return openSessionChannel(appendP2PParams(wsUrl, pref.agentId), () =>
+  return openSessionChannel(appendP2PParams(wsUrl, boundAgent ?? pref.agentId), () =>
     fetchSavedServerWsUrl(serverId)
   );
+}
+
+// ==================== Agent 引导（bootstrap） ====================
+
+/**
+ * 中继会话就绪后启动 Agent 引导：探测远端 → 询问安装/启动 → 绑定 →
+ * 自动升级为 P2P 会话。仅登录用户的已保存服务器参与；匿名/分享/P2P 会话跳过。
+ */
+function wireAgentBootstrap(
+  terminal: SSHTerminal,
+  serverId: number | undefined,
+  hostInfo: SSHHostInfo | undefined,
+  reconnectFactory?: () => Promise<SessionTransportLike>
+): void {
+  if (!serverId || !isLoggedIn) return;
+  const server = serverList?.getServer(serverId);
+  if (!server) return;
+  terminal.setAgentBootstrapReadyHandler(() => {
+    void runAgentBootstrap({
+      terminal,
+      server,
+      upgrade: (agentId) => upgradeSessionToP2P(serverId, agentId, terminal, hostInfo, reconnectFactory),
+    });
+  });
+}
+
+/**
+ * 同标签页把当前会话换成 P2P：铸一次性 token → RTC 信令 → connectWithWebSocket
+ * 关闭旧中继传输并在原 SSH 目标上开新会话（服务端凭据下发，用户无感重认证）。
+ * 信令失败经 refetch 回退中继，绝不把用户留在断线态。
+ */
+async function upgradeSessionToP2P(
+  serverId: number,
+  agentId: string,
+  terminal: SSHTerminal,
+  hostInfo: SSHHostInfo | undefined,
+  reconnectFactory?: () => Promise<SessionTransportLike>
+): Promise<boolean> {
+  try {
+    const wsUrl = await fetchSavedServerWsUrl(serverId);
+    const transport = await openSessionChannel(appendP2PParams(wsUrl, agentId), () =>
+      fetchSavedServerWsUrl(serverId)
+    );
+    if (transport instanceof WebSocket) {
+      // 信令失败已回退出一条新中继通道——升级无收益，关掉它、保留现有会话。
+      try {
+        transport.close();
+      } catch {
+        /* 已关闭 */
+      }
+      return false;
+    }
+    terminal.connectWithWebSocket(transport, hostInfo, { reconnectFactory });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ==================== 断开连接处理 ====================

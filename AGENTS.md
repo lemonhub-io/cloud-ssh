@@ -45,8 +45,11 @@ src/
 │   ├── dns-check.ts  # DNS-over-HTTPS 解析 + 统一 IP 块检查（DNS rebinding 防重绑定 SSRF 防护）
 │   ├── ip-geo.ts     # 保存直连服务器时 IPinfo 区域推断，映射为 DO locationHint
 │   ├── turn-credentials.ts # Cloudflare Realtime TURN 短时 ICE 凭据签发（+自建 TURN 追加项）
-│   ├── install-scripts.ts  # Agent 一键安装脚本（/install.sh /install.ps1，按请求源模板化）
+│   ├── install-scripts.ts  # Agent 一键安装脚本（/install.sh /install.ps1，按请求源模板化，
+│   │                       #   --system 走 root 路径 + 硬化 system unit；多镜像下载回退）
 │   │                       #   + /api/agent/download/ 反代 GitHub agent-latest 发布产物
+│   ├── agent-bootstrap.ts  # 引导 exec 命令构建与探测解析（CS_PROBE 单行标记、
+│   │                       #   sudo -S stdin 注密、按服务形态分发启动命令）
 │   ├── exec-channel.ts  # SSH exec channel 生命周期与有界输出捕获（OS 检测等只读命令复用）
 │   └── html.ts       # Auto-generated - DO NOT EDIT
 ├── ssh/              # SSH protocol implementation
@@ -105,8 +108,9 @@ frontend/
 │   ├── session-transport.ts # 会话传输抽象（SessionTransportLike）：RtcTransport 信令/数据通道、
 │   │                        #   DataChannelTransport、AdoptedRelayTransport（一次性票据透明降级复用同一 WS）
 │   ├── agent-manager.ts   # Agent 偏好（连接方式选择）+ Agent 管理面板（创建/复制令牌/删除）
-│   │                      #   + 首次连接方式询问（仅一次）+ Agent 上线→P2P 切换提示
-│   │                      #   + 令牌内嵌的一键安装命令（install.sh / install.ps1）
+│   │                      #   + Agent 上线→P2P 切换提示 + 令牌内嵌的一键安装命令
+│   ├── agent-bootstrap.ts # 远端 Agent 引导编排：中继会话 exec 探测/安装/启动目标机
+│   │                      #   Agent → /api/agents 等上线 → 绑定 → 同标签页升级 P2P
 │   ├── public-config.ts   # /api/config 单例缓存（含 p2pEnabled 能力位）
 │   ├── snippet-manager.ts # 命令片段库面板（云端/本地双后端、参数占位符录入、搜索/复制、填入/填入并执行、编辑/删除）
 │   ├── snippet-variables.ts # 命令片段 {{var}} 参数占位符提取与安全替换纯函数
@@ -210,11 +214,12 @@ Three Durable Objects handle state:
    - Handles SSH session lifecycle
    - Accepts browser WebSockets through the Hibernation API, but active outbound SSH TCP sockets keep the DO awake and prevent hibernation during a live session
    - **P2P signaling mode**: `mode=p2p` upgrades skip TCP setup and park the WS as a signaling channel; the same DO class also hosts `agent:<agentId>` instances holding agents' persistent signaling WS. Session DOs relay SDP/ICE to agent DOs via `/internal/deliver` stub fetches; after `rtc_ready` both WSes drop and the DOs idle-die, so a live P2P session costs ~zero DO time
+   - **Agent bootstrap control frames**: relay 会话上就绪后，`SSHSession` 额外接受 `agent_probe`/`agent_install`/`agent_start` JSON 帧（仅 `state==='ready'` 且登录用户自有会话，share/匿名拒绝），复用 exec 通道在目标机上探测/安装/启动 Agent——sudo 密码只走 exec stdin（`sudo -S`），不进远端命令行/ps。安装后前端经 `PUT /api/servers/:id/agent` 绑定并开新 P2P 会话
 
 2. **UserDBDO** (`src/worker/user-db.ts`)
    - SQLite-based user and server storage
    - GitHub OAuth user management
-   - `agents` table (SCHEMA_VERSION=2): P2P agent registry — token plaintext is never stored (SHA-256 hash only), `<githubId>:<agentId>:<secret>` format lets the Worker route token validation to the owner's DO instance without a global scan
+   - `agents` table + `servers.agent_id`/`servers.agent_loopback` (SCHEMA_VERSION=3): P2P agent registry — token plaintext is never stored (SHA-256 hash only), `<githubId>:<agentId>:<secret>` format lets the Worker route token validation to the owner's DO instance without a global scan. `agent_loopback=1` 时 `forwardP2PSignalAttach` 把 SSH 目标改写为 127.0.0.1 并剥离 jumpHosts（Agent 与目标同机）
 
 3. **SSHShareDO** (`src/worker/share-do.ts`)
    - Owns one random capability's one-time claim, short-lived connection ticket, expiry, and revocation state
@@ -266,6 +271,7 @@ Required for optional features (configured in `wrangler.toml` or Cloudflare Dash
 | `/api/auth/me` | GET | Yes | Returns current user info |
 | `/api/servers` | GET/POST | Yes | List or create saved servers（含 `tags` 与可选 `jump_server_id`） |
 | `/api/servers/:id` | PUT/DELETE | Yes | Update or delete a server（含标签和跳板关系校验） |
+| `/api/servers/:id/agent` | PUT | Yes | 绑定/解绑前置 P2P Agent（`agent_loopback` 表示 Agent 与目标同机，P2P 目标改写 127.0.0.1） |
 | `/api/servers/:id/connect` | POST | Yes | Generate one-time-token, return WebSocket URL |
 | `/api/servers/:id/memory` | GET | Yes | Read unified server memory (work logs & context knowledge) |
 | `/api/servers/:id/work-logs` | POST | Yes | Create a server work log entry |

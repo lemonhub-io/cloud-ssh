@@ -18,8 +18,6 @@ export type ConnectMode = 'relay' | 'p2p';
 
 const MODE_KEY = 'cloudssh.p2p.mode';
 const AGENT_KEY = 'cloudssh.p2p.agentId';
-/** 首次连接前的连接方式询问只做一次；此后走 Agent 面板偏好。 */
-const ASKED_KEY = 'cloudssh.p2p.asked';
 /** Agent 上线后提示切换 P2P，用户拒绝过则不再打扰。 */
 const SWITCH_DECLINED_KEY = 'cloudssh.p2p.switchDeclined';
 /** Agent 心跳节流 60s：超过该窗口未见心跳视为离线（UI 提示口径）。 */
@@ -71,58 +69,6 @@ function markSwitchDeclined(): void {
   } catch {
     /* 忽略 */
   }
-}
-
-function markConnectModeAsked(): void {
-  try {
-    localStorage.setItem(ASKED_KEY, '1');
-  } catch {
-    /* 忽略 */
-  }
-}
-
-/**
- * 首次连接前的连接方式询问（仅一次）：
- * - 默认推荐中继（即开即用），主按钮聚焦中继；
- * - 选择安装 Agent 时打开管理面板，本次连接仍走中继（Agent 尚未上线）。
- * 调用方须先确认 p2pEnabled 且用户已登录（匿名无 Agent 注册能力）。
- */
-export function promptConnectModeOnce(): Promise<void> {
-  try {
-    if (localStorage.getItem(ASKED_KEY) === '1') return Promise.resolve();
-  } catch {
-    return Promise.resolve();
-  }
-  markConnectModeAsked();
-
-  return new Promise((resolve) => {
-    const overlay = document.createElement('div');
-    overlay.className =
-      'responsive-modal fixed inset-0 z-[130] flex items-center justify-center';
-    overlay.setAttribute('role', 'dialog');
-    overlay.setAttribute('aria-modal', 'true');
-    // pi-lens-ignore: no-inner-html
-    overlay.innerHTML = `
-      <div class="modal-overlay absolute inset-0"></div>
-      <div class="cyber-box p-6 shadow-2xl relative z-10 w-full max-w-md mx-4">
-        <h2 class="text-sm font-bold text-primary mb-2">${t('agent.firstPromptTitle')}</h2>
-        <p class="text-xs text-muted leading-relaxed mb-5">${t('agent.firstPromptDesc')}</p>
-        <div class="flex flex-col gap-2">
-          <button type="button" data-mode-relay class="cyber-button text-primary px-4 py-2.5 text-xs font-bold w-full">${t('agent.firstPromptRelay')}</button>
-          <button type="button" data-mode-agent class="cyber-button text-muted px-4 py-2 text-xs w-full">${t('agent.firstPromptInstall')}</button>
-        </div>
-      </div>
-    `;
-    const done = (install: boolean) => {
-      overlay.remove();
-      if (install) void new AgentManager().open();
-      resolve();
-    };
-    overlay.querySelector('[data-mode-relay]')?.addEventListener('click', () => done(false));
-    overlay.querySelector('[data-mode-agent]')?.addEventListener('click', () => done(true));
-    document.body.appendChild(overlay);
-    (overlay.querySelector('[data-mode-relay]') as HTMLButtonElement | null)?.focus();
-  });
 }
 
 /** 生成内嵌 token 与站点源的一键安装命令（Linux/macOS、Windows、手动 Node）。 */

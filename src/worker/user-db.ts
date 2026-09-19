@@ -35,6 +35,8 @@ interface StoredServerRow {
   inferred_hint: string | null;
   os: string | null;
   jump_server_id: number | null;
+  agent_id: string | null;
+  agent_loopback: number;
 }
 
 // ====== 行形状帮助类型：与 UserDBDO 内各 SELECT 列一一对应（配合 query<T> 消除逐处 as unknown as） ======
@@ -52,6 +54,8 @@ type ServerRow = {
   tags: string;
   os: string | null;
   jump_server_id: number | null;
+  agent_id: string | null;
+  agent_loopback: number;
   created_at: string;
   updated_at: string;
 };
@@ -115,7 +119,7 @@ export class UserDBDO {
    * 以 PRAGMA user_version 守卫可跳过全部幂等 DDL，把每次唤醒的初始化
    * 从二十余条 SQLite exec 降为一次读取（DO 唤醒与执行时长均计入计费）。
    */
-  private static readonly SCHEMA_VERSION = 2;
+  private static readonly SCHEMA_VERSION = 3;
 
   private initSchema(): void {
     try {
@@ -163,6 +167,8 @@ export class UserDBDO {
         tags        TEXT NOT NULL DEFAULT '[]',
         os          TEXT DEFAULT NULL,
         jump_server_id INTEGER DEFAULT NULL,
+        agent_id    TEXT DEFAULT NULL,
+        agent_loopback INTEGER NOT NULL DEFAULT 0,
         created_at  TEXT DEFAULT (datetime('now')),
         updated_at  TEXT DEFAULT (datetime('now'))
       );
@@ -277,6 +283,12 @@ export class UserDBDO {
     if (!serverCols.some((c: any) => c.name === 'jump_server_id')) {
       this.db.exec('ALTER TABLE servers ADD COLUMN jump_server_id INTEGER DEFAULT NULL');
     }
+    if (!serverCols.some((c: any) => c.name === 'agent_id')) {
+      this.db.exec('ALTER TABLE servers ADD COLUMN agent_id TEXT DEFAULT NULL');
+    }
+    if (!serverCols.some((c: any) => c.name === 'agent_loopback')) {
+      this.db.exec('ALTER TABLE servers ADD COLUMN agent_loopback INTEGER NOT NULL DEFAULT 0');
+    }
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_servers_jump ON servers(jump_server_id)');
 
     // === Migration: 给既有 ssh_shares 表追加审计清理留痕列（幂等） ===
@@ -351,6 +363,12 @@ export class UserDBDO {
       const connectMatch = path.match(/^\/internal\/servers\/(\d+)\/connect$/);
       if (connectMatch && request.method === 'POST') {
         return this.handleConnectServer(parseInt(connectMatch[1], 10), request);
+      }
+
+      // /internal/servers/:id/agent —— 绑定/解绑为该服务器前置 P2P 的 Agent
+      const agentBindMatch = path.match(/^\/internal\/servers\/(\d+)\/agent$/);
+      if (agentBindMatch && request.method === 'PUT') {
+        return this.handleBindServerAgent(parseInt(agentBindMatch[1], 10), request);
       }
 
       // /internal/servers/:id/share-config —— 仅由 SSHShareDO 兑换一次性分享时调用
@@ -642,7 +660,7 @@ export class UserDBDO {
 
   private handleGetServers(userId: number): Response {
     const rows = this.query<ServerRow>(
-      `SELECT id, user_id, name, host, port, username, auth_method, region, inferred_hint, tags, os, jump_server_id, created_at, updated_at
+      `SELECT id, user_id, name, host, port, username, auth_method, region, inferred_hint, tags, os, jump_server_id, agent_id, agent_loopback, created_at, updated_at
        FROM servers WHERE user_id = ? ORDER BY updated_at DESC`,
       userId
     );
@@ -762,7 +780,7 @@ export class UserDBDO {
 
     // 获取新创建的记录
     const rows = this.query<ServerRow>(
-      `SELECT id, user_id, name, host, port, username, auth_method, region, inferred_hint, tags, os, jump_server_id, created_at, updated_at
+      `SELECT id, user_id, name, host, port, username, auth_method, region, inferred_hint, tags, os, jump_server_id, agent_id, agent_loopback, created_at, updated_at
        FROM servers WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
       body.user_id
     );
@@ -939,7 +957,7 @@ export class UserDBDO {
     }
 
     const row = this.query<ServerRow>(
-      `SELECT id, user_id, name, host, port, username, auth_method, region, inferred_hint, tags, os, jump_server_id, created_at, updated_at
+      `SELECT id, user_id, name, host, port, username, auth_method, region, inferred_hint, tags, os, jump_server_id, agent_id, agent_loopback, created_at, updated_at
        FROM servers WHERE id = ?`,
       serverId
     );
@@ -1022,6 +1040,47 @@ export class UserDBDO {
 
     this.db.exec('UPDATE servers SET os = ? WHERE id = ?', body.os, serverId);
     return Response.json({ success: true });
+  }
+
+  /**
+   * 绑定/解绑服务器的前置 P2P Agent。
+   * agent_id 为空表示解绑；agent_loopback=1 表示 Agent 就装在该服务器上
+   * （P2P 会话把目标改写为 127.0.0.1，绕开公网回环与 NAT 不可达问题）。
+   */
+  private async handleBindServerAgent(serverId: number, request: Request): Promise<Response> {
+    const body = await request.json<{
+      user_id: number;
+      agent_id: string | null;
+      agent_loopback?: boolean;
+    }>();
+    if (!Number.isInteger(body.user_id) || body.user_id <= 0) {
+      return Response.json({ error: 'Invalid user_id' }, { status: 400 });
+    }
+    const existing = this.query<UserIdRow>('SELECT user_id FROM servers WHERE id = ?', serverId);
+    if (existing.length === 0) return Response.json({ error: 'Server not found' }, { status: 404 });
+    if (existing[0].user_id !== body.user_id) {
+      return Response.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const agentId = typeof body.agent_id === 'string' && body.agent_id ? body.agent_id : null;
+    if (agentId !== null) {
+      const agents = this.query<{ user_id: number }>(
+        'SELECT user_id FROM agents WHERE id = ?',
+        agentId
+      );
+      if (agents.length === 0 || agents[0].user_id !== body.user_id) {
+        return Response.json({ error: 'Agent not found' }, { status: 404 });
+      }
+    }
+
+    const loopback = agentId !== null && body.agent_loopback === true ? 1 : 0;
+    this.db.exec(
+      "UPDATE servers SET agent_id = ?, agent_loopback = ?, updated_at = datetime('now') WHERE id = ?",
+      agentId,
+      loopback,
+      serverId
+    );
+    return Response.json({ success: true, agent_id: agentId, agent_loopback: loopback });
   }
 
   // ==================== 一次性 SSH 分享 ====================
@@ -1486,6 +1545,8 @@ export class UserDBDO {
       os: target.os,
       locationHint,
       jumpHosts,
+      agentId: target.agent_id ?? null,
+      agentLoopback: !!target.agent_loopback,
     };
 
     // 防止 token 数量无限增长

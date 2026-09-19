@@ -31,6 +31,10 @@ export interface ServerConfig {
   /** 连接时检测到的远端操作系统（canonical key，如 ubuntu/debian/centos） */
   os?: string | null;
   jump_server_id?: number | null;
+  /** 绑定的 P2P Agent ID（null/缺省 = 未绑定，连接走中继+引导探测） */
+  agent_id?: string | null;
+  /** 1 = Agent 与 SSH 目标同机，P2P 时目标改写为 127.0.0.1 */
+  agent_loopback?: number;
   created_at: string;
   updated_at: string;
 }
@@ -166,6 +170,11 @@ export class ServerList {
     this.pageSize = nextPageSize;
     this.currentPage = 1;
     this.renderServerGrid();
+  }
+
+  /** 按 ID 取缓存的服务器记录（引导编排器读取 agent 绑定信息）。 */
+  getServer(serverId: number): ServerConfig | undefined {
+    return this.servers.find((s) => s.id === serverId);
   }
 
   /** 连接后由 os_detected 消息回调：更新某台服务器的操作系统并即时重渲染图标 */

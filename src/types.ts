@@ -69,6 +69,16 @@ export interface SSHConnectionConfig {
   locationHint?: string;
   /** Saved jump hosts ordered from the public entry hop toward this target. */
   jumpHosts?: SSHJumpHostConfig[];
+  /**
+   * 与该服务器绑定的前置 Agent（servers.agent_id）；P2P 连接首选它。
+   * 仅服务端填充，客户端输入忽略。
+   */
+  agentId?: string | null;
+  /**
+   * true 表示 Agent 就安装在目标服务器上：P2P 会话把 host 改写为
+   * 127.0.0.1（端口保持 SSH 端口），避免公网回环/NAT 下目标自连失败。
+   */
+  agentLoopback?: boolean;
   /** 仅可由 Worker 内部的一次性分享兑换流程写入，客户端输入必须剥离。 */
   sessionPolicy?: SSHSessionPolicy;
 }
@@ -213,6 +223,10 @@ export interface ServerConfig {
   os?: string | null;
   /** Optional saved server used as the immediate SSH jump host. */
   jump_server_id?: number | null;
+  /** 绑定为该服务器前置 P2P 的 Agent ID（null 表示未绑定） */
+  agent_id?: string | null;
+  /** 1 表示 Agent 安装在该服务器上，P2P 时目标改写为 127.0.0.1 */
+  agent_loopback?: number;
   created_at: string;
   updated_at: string;
 }

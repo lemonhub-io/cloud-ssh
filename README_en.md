@@ -205,20 +205,27 @@ TURN_EXTRA_USERNAME=cloudssh
 TURN_EXTRA_CREDENTIAL=<static secret>
 ```
 
-1. On your first saved-server connection the frontend asks once which mode to use (one time only, relay recommended); you can also open **Agent** from the server-list toolbar anytime.
-2. In the panel, create an agent and **copy the token immediately** — plaintext is returned only once; the server stores only a hash. Below the token the panel shows ready-made install commands with the token and site origin already embedded:
+**Recommended path — no manual install (bootstrap)**: connect to a saved Linux/macOS server over the relay as usual; the frontend then automatically probes the target for an agent:
 
-   ```bash
-   # Linux / macOS — downloads a self-contained binary, writes a 0600 config, registers autostart (systemd --user / launchd)
-   curl -fsSL https://<your-site>/install.sh | sh -s -- --token <githubId>:<agentId>:<secret>
+- **Installed and running** → the server is bound to that agent and the session upgrades to P2P (no action needed);
+- **Installed but stopped** → asks whether to start it remotely (a systemd system service requires the sudo password);
+- **Not installed** → asks whether to install: user-level (no sudo, `~/.local/bin` + `systemd --user`/launchd autostart) or system-level (sudo, `/usr/local/bin` + system unit). On consent it creates the agent, ships the install over the current SSH session, waits for it to come online, binds, and upgrades to P2P.
 
-   # Windows (PowerShell) — downloads the exe and registers a logon scheduled task
-   iex "& { $(irm https://<your-site>/install.ps1) } -Token '<githubId>:<agentId>:<secret>'"
-   ```
+Secrets stay safe throughout: the agent token and sudo password travel only over SSH exec stdin — never in remote argv/`ps`. Any refusal or failure keeps the relay, which thereafter serves only as bootstrap and fallback. Future connections to that server go P2P automatically (the target is rewritten to `127.0.0.1` when the agent is co-located with it).
 
-   Binaries are built by CI as Node SEA executables (linux/darwin/windows × x64/arm64) — no Node.js needed on the target. Downloads use a mirror fallback chain: site proxy → workers.dev proxy → GitHub direct, so they work behind firewalls and from datacenter networks. **Agent call-home (signaling WS + audit/OS callbacks) defaults to the workers.dev origin** — a custom domain may serve a CF managed challenge (403) to datacenter IPs while workers.dev does not; if fetching the script itself is blocked, swap the command's host for the workers.dev URL. Optional flags: `--no-service` to skip autostart, `--server` to explicitly override the call-home origin. Manual path (Node.js ≥ 20 + source): `cd agent && pnpm install && pnpm run build && node dist/agent.js --token <token>`; every flag also has an env var (`AGENT_TOKEN`/`AGENT_SERVER`/`AGENT_SIGNAL_URL`/`AGENT_ALLOWLIST`/`AGENT_MAX_SESSIONS`/`AGENT_DEBUG`).
+**Manual path (gateway install on another machine)**: to run the agent on a *different* host than the SSH target — e.g. as an internal-network gateway — open the **Agent** panel from the server-list toolbar, create an agent and **copy the token immediately** (plaintext is shown once; the server stores only a hash). Below the token the panel shows ready-made install commands with the token and site origin already embedded:
 
-3. Once the agent reports online the panel offers to switch to P2P; you can also pick it anytime under "Connection transport" (relay stays the default). The browser completes ICE/DTLS negotiation with the agent via DO signaling, then terminal and SFTP run on DataChannels. Signaling timeouts or negotiation failures fall back to the relay automatically — share links degrade transparently without consuming a second ticket.
+```bash
+# Linux / macOS — downloads a self-contained binary, writes a 0600 config, registers autostart (systemd --user / launchd)
+curl -fsSL https://<your-site>/install.sh | sh -s -- --token <githubId>:<agentId>:<secret>
+
+# Windows (PowerShell) — downloads the exe and registers a logon scheduled task
+iex "& { $(irm https://<your-site>/install.ps1) } -Token '<githubId>:<agentId>:<secret>'"
+```
+
+Binaries are built by CI as Node SEA executables (linux/darwin/windows × x64/arm64) — no Node.js needed on the target. Downloads use a mirror fallback chain: site proxy → workers.dev proxy → GitHub direct, so they work behind firewalls and from datacenter networks. **Agent call-home (signaling WS + audit/OS callbacks) defaults to the workers.dev origin** — a custom domain may serve a CF managed challenge (403) to datacenter IPs while workers.dev does not; if fetching the script itself is blocked, swap the command's host for the workers.dev URL. Optional flags: `--system` (root paths + system unit), `--no-service` to skip autostart, `--server` to explicitly override the call-home origin. Manual path (Node.js ≥ 20 + source): `cd agent && pnpm install && pnpm run build && node dist/agent.js --token <token>`; every flag also has an env var (`AGENT_TOKEN`/`AGENT_SERVER`/`AGENT_SIGNAL_URL`/`AGENT_ALLOWLIST`/`AGENT_MAX_SESSIONS`/`AGENT_DEBUG`).
+
+Once the agent reports online the panel offers to switch to P2P; you can also pick it anytime under "Connection transport" (relay stays the default). The browser completes ICE/DTLS negotiation with the agent via DO signaling, then terminal and SFTP run on DataChannels. Signaling timeouts or negotiation failures fall back to the relay automatically — share links degrade transparently without consuming a second ticket.
 
 > Notes: credentials are decrypted server-side and delivered to the agent inside `session_init` over the signaling channel — the same trust model as the existing relay path. Audit for P2P share sessions is forwarded by the agent and is therefore application-level bookkeeping. The agent host is the new network trust boundary — scope it down with `--allowlist`.
 

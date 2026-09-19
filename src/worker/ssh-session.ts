@@ -71,6 +71,14 @@ import {
 } from '../types';
 import { DirectTcpipStream } from './direct-tcpip-stream';
 import { ExecChannel } from './exec-channel';
+import {
+  buildInstallCommand,
+  buildProbeCommand,
+  buildStartCommand,
+  parseProbeOutput,
+  type AgentProbeResult,
+  type BootstrapCommand,
+} from './agent-bootstrap';
 import { detectAndPersistRemoteOS } from './os-detect';
 import { SFTPHandler } from './sftp-handler';
 
@@ -2133,6 +2141,18 @@ export class SSHSession {
           await this.handleResize(parsed.cols, parsed.rows);
           return;
         }
+        if (parsed.type === 'agent_probe') {
+          void this.handleAgentProbe();
+          return;
+        }
+        if (parsed.type === 'agent_install') {
+          void this.handleAgentInstall(parsed);
+          return;
+        }
+        if (parsed.type === 'agent_start') {
+          void this.handleAgentStart(parsed);
+          return;
+        }
 
         // NOTE: SFTP control messages are handled over the dedicated SFTP WebSocket.
       }
@@ -2826,7 +2846,8 @@ export class SSHSession {
   private async executeRemoteCommand(
     command: string,
     timeout: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    stdin?: Uint8Array
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     this.recordUserActivity();
     const channelID = this.nextChannelID++;
@@ -2852,6 +2873,17 @@ export class SSHSession {
       // Open succeeded — send exec request
       const execReq = channel.buildExecRequest(command);
       await this.sendEncrypted(execReq);
+
+      // Optional stdin payload (e.g. sudo -S password) followed by EOF so the
+      // remote command sees a closed stdin after consuming it. 走窗口记账的
+      // takeChannelDataChunk；新通道初始窗口 ≥256B 一定够发单行密码。
+      if (stdin && stdin.length > 0) {
+        const chunk = channel.takeChannelDataChunk(stdin, 0);
+        if (chunk) {
+          await this.sendEncryptedChannelData(chunk, channel);
+        }
+        await this.sendEncrypted(channel.buildEof());
+      }
 
       // Wait for result with timeout + abort
       let aborted = false;
@@ -2896,6 +2928,190 @@ export class SSHSession {
       // （之前 waitForExecChannelOpen 超时 throw 会跳过清理，导致 execCh 残留在 activeExecChannels）
       this.activeExecChannels.delete(channelID);
       this.channels.delete(channelID);
+    }
+  }
+
+  // ==================== Agent bootstrap（经中继会话的探测/安装/启动） ====================
+
+  private bootstrapBusy = false;
+  private lastProbeResult: AgentProbeResult | null = null;
+
+  /**
+   * 引导操作门控：仅已就绪、登录用户的自有（非分享）会话可用，且同一时刻
+   * 只允许一个引导操作。越权/忙时回 ok:false 而非静默丢弃，前端才不悬挂。
+   */
+  private bootstrapGate(): boolean {
+    return (
+      this.state === 'ready' &&
+      !this.config.sessionPolicy &&
+      !!this.userId &&
+      !this.bootstrapBusy
+    );
+  }
+
+  private sendBootstrapJson(payload: Record<string, unknown>): void {
+    try {
+      if (this.ws.readyState === CHANNEL_OPEN) this.ws.send(JSON.stringify(payload));
+    } catch {
+      /* ws closed mid-op */
+    }
+  }
+
+  /**
+   * 按命令规约组装 exec stdin：token 与 sudo 密码只走 stdin，
+   * 绝不出现在远端命令行/ps/日志。缺任一行返回 'missing' 供调用方报错。
+   */
+  private buildBootstrapStdin(
+    spec: BootstrapCommand,
+    parsed: { token?: unknown; sudo?: unknown }
+  ): Uint8Array | 'missing' | undefined {
+    if (spec.stdinLines.length === 0) return undefined;
+    const values: Record<'token' | 'sudo', unknown> = {
+      token: parsed.token,
+      sudo: parsed.sudo,
+    };
+    const lines: string[] = [];
+    for (const kind of spec.stdinLines) {
+      const v = values[kind];
+      // token ≤512B、密码 ≤256B；超长/缺失/换行注入一律拒绝
+      if (
+        typeof v !== 'string' ||
+        v.length === 0 ||
+        v.length > (kind === 'token' ? 512 : 256) ||
+        v.includes('\n') ||
+        v.includes('\r')
+      ) {
+        return 'missing';
+      }
+      lines.push(v);
+    }
+    return this.textEncoder.encode(`${lines.join('\n')}\n`);
+  }
+
+  private async handleAgentProbe(): Promise<void> {
+    if (!this.bootstrapGate()) {
+      this.sendBootstrapJson({ type: 'agent_probe_result', ok: false, error: 'unavailable' });
+      return;
+    }
+    this.bootstrapBusy = true;
+    try {
+      const r = await this.executeRemoteCommand(buildProbeCommand(), 30_000);
+      const probe = parseProbeOutput(r.stdout);
+      this.lastProbeResult = probe;
+      if (!probe) {
+        this.sendBootstrapJson({
+          type: 'agent_probe_result',
+          ok: false,
+          error: 'unparseable',
+          detail: r.stdout.slice(-512),
+        });
+        return;
+      }
+      this.sendBootstrapJson({ type: 'agent_probe_result', ok: true, ...probe });
+    } catch (e) {
+      this.sendBootstrapJson({
+        type: 'agent_probe_result',
+        ok: false,
+        error: e instanceof Error ? e.message.slice(0, 200) : 'exec failed',
+      });
+    } finally {
+      this.bootstrapBusy = false;
+    }
+  }
+
+  private async handleAgentInstall(parsed: {
+    token?: unknown;
+    installBase?: unknown;
+    agentServer?: unknown;
+    system?: unknown;
+    sudo?: unknown;
+  }): Promise<void> {
+    if (!this.bootstrapGate()) {
+      this.sendBootstrapJson({ type: 'agent_install_result', ok: false, error: 'unavailable' });
+      return;
+    }
+    const token = typeof parsed.token === 'string' ? parsed.token : '';
+    const tokenOk = /^\d{1,20}:[A-Za-z0-9_-]{8,64}:[A-Za-z0-9_-]{16,128}$/.test(token);
+    const installBase =
+      typeof parsed.installBase === 'string' && /^https?:\/\/[^\s'"`]{1,200}$/.test(parsed.installBase)
+        ? parsed.installBase
+        : '';
+    const agentServer =
+      typeof parsed.agentServer === 'string' && /^https?:\/\/[^\s'"`]{1,200}$/.test(parsed.agentServer)
+        ? parsed.agentServer
+        : '';
+    if (!tokenOk || !installBase || !agentServer) {
+      this.sendBootstrapJson({ type: 'agent_install_result', ok: false, error: 'bad_args' });
+      return;
+    }
+    const spec = buildInstallCommand({
+      installBase,
+      agentServer,
+      system: parsed.system === true,
+    });
+    const stdin = this.buildBootstrapStdin(spec, parsed);
+    if (stdin === 'missing') {
+      this.sendBootstrapJson({
+        type: 'agent_install_result',
+        ok: false,
+        error: spec.stdinLines.includes('sudo') ? 'sudo_required' : 'bad_args',
+      });
+      return;
+    }
+    this.bootstrapBusy = true;
+    try {
+      // 远端要下载 ~100MB 二进制，超时给足
+      const r = await this.executeRemoteCommand(spec.command, 300_000, undefined, stdin);
+      const tail = `${r.stdout}\n${r.stderr}`.trim().slice(-2048);
+      this.sendBootstrapJson({
+        type: 'agent_install_result',
+        ok: r.exitCode === 0,
+        ...(r.exitCode !== 0 ? { error: `exit ${r.exitCode}`, logTail: tail } : { logTail: tail.slice(-512) }),
+      });
+    } catch (e) {
+      this.sendBootstrapJson({
+        type: 'agent_install_result',
+        ok: false,
+        error: e instanceof Error ? e.message.slice(0, 200) : 'exec failed',
+      });
+    } finally {
+      this.bootstrapBusy = false;
+    }
+  }
+
+  private async handleAgentStart(parsed: { sudo?: unknown }): Promise<void> {
+    if (!this.bootstrapGate()) {
+      this.sendBootstrapJson({ type: 'agent_start_result', ok: false, error: 'unavailable' });
+      return;
+    }
+    const probe = this.lastProbeResult;
+    if (!probe?.installed) {
+      this.sendBootstrapJson({ type: 'agent_start_result', ok: false, error: 'probe_first' });
+      return;
+    }
+    const spec = buildStartCommand(probe);
+    const stdin = this.buildBootstrapStdin(spec, parsed);
+    if (stdin === 'missing') {
+      this.sendBootstrapJson({ type: 'agent_start_result', ok: false, error: 'sudo_required' });
+      return;
+    }
+    this.bootstrapBusy = true;
+    try {
+      const r = await this.executeRemoteCommand(spec.command, 30_000, undefined, stdin);
+      const tail = `${r.stdout}\n${r.stderr}`.trim().slice(-1024);
+      this.sendBootstrapJson({
+        type: 'agent_start_result',
+        ok: r.exitCode === 0,
+        ...(r.exitCode !== 0 ? { error: `exit ${r.exitCode}`, logTail: tail } : {}),
+      });
+    } catch (e) {
+      this.sendBootstrapJson({
+        type: 'agent_start_result',
+        ok: false,
+        error: e instanceof Error ? e.message.slice(0, 200) : 'exec failed',
+      });
+    } finally {
+      this.bootstrapBusy = false;
     }
   }
 
