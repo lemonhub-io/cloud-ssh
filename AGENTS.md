@@ -190,6 +190,21 @@ Three Durable Objects handle state:
    - Owns one random capability's one-time claim, short-lived connection ticket, expiry, and revocation state
    - Stores the append-only lifecycle, SFTP, and terminal-output audit log for that share session
 
+## 计费模型与成本约束（Cloudflare DO Billing）
+
+改动 DO / WebSocket / 定时器相关代码前必须理解以下计费事实（依据 Cloudflare 官方文档 durable-objects/platform/pricing 与 concepts/durable-object-lifecycle）：
+
+- **Duration 计费口径**：DO 在「执行 JS」或「空闲但不可休眠」时按 wall-clock 计费（每实例按 128MB 计，即每秒 0.125 GB-s）；「可休眠的空闲」即使尚未真正休眠也不计费。
+- **SSHSessionDO 无法休眠是设计必然**：活跃 SSH 会话的加密/通道状态全在内存，且出向 `connect()` TCP socket 本身就是反休眠条件之一 —— 会话 wall-time 即成本。控制手段只有 `IDLE_TIMEOUT`（默认 30m）、僵尸链路看门狗（60s 无 SSH 包即断）与断线宽限（60s）三件事，勿删除或调松。
+- **出向 socket 钉住 DO 的上限是 15 分钟/连接**：超过后 socket 继续工作但不再阻止驱逐；驱逐规则为「70–140 秒无 DO 级事件」。**socket 数据不算 DO 事件** —— 前端每 5s 的应用层 `{"type":"ping"}` WebSocket 心跳是让长会话撑过 15 分钟钉住期的关键事件源，**严禁**将其改为 `setWebSocketAutoResponse` 边缘自动应答或删除（会导致会话在 ~15 分钟处被平台驱逐）。同理不要在 DO 里用 `setTimeout` 模拟心跳 —— pending timer 本身就是反休眠条件。
+- **WS 消息计费**：入向 WS 消息按 20:1 折算为 DO 请求；出向消息与协议层 ping/pong（运行时自动应答）免费；入向 WS 消息同时是会重置驱逐时钟的事件。
+- **SQLite 计量**：行读/写均计费（free: 读 5M/日、写 100K/日）；**每次 `setAlarm` 计 1 行写**；删除也计写。审计写已按 16KB/1s 批量缓冲 + 5MiB 上限收敛，勿改回逐条直写。
+- **构造函数即唤醒成本**：DO 每次从休眠恢复都会重跑 constructor。`UserDBDO`/`SSHShareDO` 的建表与迁移 DDL 已用 `PRAGMA user_version` 守卫（各文件的 `SCHEMA_VERSION` 常量）—— **新增表结构/迁移时必须递增对应常量**，否则既有 DO 永远不会执行新迁移。
+- **可休眠 DO 内禁止新增 `setTimeout`/`setInterval`、未决 `fetch()`、标准 WS API** —— 任一项都会使 DO 永久不可休眠并把等待时间全额计费；跨休眠的延时任务一律用 `storage.setAlarm`。
+- **认证模式说明**：每个已认证 API 请求 = 2 次 DO 调用（`session/verify` + 业务操作，同一 UserDBDO 实例）。将校验下沉进内部路由可减半请求数，但需把 `x-session-token` 校验契约铺到全部内部路由，仅在有明确规模需求时再做。
+- **`/api/config` 经 `public-config.ts` 单例缓存**：同页多次调用只发一次请求；新增消费方复用该函数，勿直接 `fetch('/api/config')`。
+- 次要约束：`PBKDF2(100k)` 凭据派生仅在连接时执行（列表查询不取 credential 列），勿把 credential 加回列表 SELECT；`derivedKeyCache`/`connectTokens` 为内存态，随休眠丢失，属有意设计。
+
 ## Environment Variables
 
 Required for optional features (configured in `wrangler.toml` or Cloudflare Dashboard):

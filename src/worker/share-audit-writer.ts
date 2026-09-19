@@ -1,6 +1,8 @@
 import type { Env, SSHSessionPolicy } from '../types';
 
-export const SHARE_AUDIT_FLUSH_CHARS = 8 * 1024;
+// 单条审计行体积：16KB 在审计可读性与写入行数/唤醒次数之间取折中；
+// 每条 terminal.output 事件 = ShareDO 一次唤醒 + 一行写入，均计入计费。
+export const SHARE_AUDIT_FLUSH_CHARS = 16 * 1024;
 export const SHARE_AUDIT_FLUSH_MS = 1000;
 
 export interface ShareAuditWriterOptions {

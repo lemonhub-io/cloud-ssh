@@ -85,10 +85,26 @@ export class SSHShareDO {
   private readonly env: Env;
   private readonly db: any;
 
+  /** 见 UserDBDO.initSchema：以 PRAGMA user_version 跳过重复 DDL，降低每次唤醒开销。 */
+  private static readonly SCHEMA_VERSION = 1;
+
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
     this.db = (state.storage as any).sql;
+    this.initSchema();
+  }
+
+  private initSchema(): void {
+    try {
+      const row = this.db.exec('PRAGMA user_version').toArray()[0] as
+        | { user_version?: number }
+        | undefined;
+      if (Number(row?.user_version ?? 0) >= SSHShareDO.SCHEMA_VERSION) return;
+    } catch {
+      /* user_version 不可读时按未初始化处理 */
+    }
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS share_state (
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -138,6 +154,12 @@ export class SSHShareDO {
       this.db.exec('ALTER TABLE share_state ADD COLUMN audit_retention_days INTEGER');
     } catch {
       /* column already exists */
+    }
+
+    try {
+      this.db.exec(`PRAGMA user_version = ${SSHShareDO.SCHEMA_VERSION}`);
+    } catch {
+      /* pragma 不支持时退化为每次全量初始化 */
     }
   }
 

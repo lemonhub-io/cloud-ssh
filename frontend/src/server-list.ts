@@ -3,6 +3,7 @@ import { maskIPAddress } from './host-display';
 import { onLocaleChange, t } from './i18n';
 import { osDisplayName, osIconSvg } from './os-icons';
 import { parsePort } from './port';
+import { getPublicConfig } from './public-config';
 import { populateRegionSelect, regionLabel } from './regions';
 import { ShareManager } from './share-manager';
 import type { SSHHostInfo } from './terminal';
@@ -286,14 +287,8 @@ export class ServerList {
   }
 
   private async fetchSharingConfig(): Promise<void> {
-    try {
-      const response = await fetch('/api/config');
-      if (!response.ok) return;
-      const config = (await response.json()) as { sshSharingEnabled?: boolean };
-      this.sharingEnabled = config.sshSharingEnabled === true;
-    } catch {
-      this.sharingEnabled = false;
-    }
+    const config = await getPublicConfig();
+    this.sharingEnabled = config?.sshSharingEnabled === true;
   }
 
   // ==================== 渲染服务器卡片 ====================

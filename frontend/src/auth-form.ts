@@ -4,6 +4,7 @@
 import { onLocaleChange, t, translateDocument } from './i18n';
 import { loadKnownFingerprint } from './known-hosts';
 import { parsePort } from './port';
+import { getPublicConfig } from './public-config';
 import { populateRegionSelect } from './regions';
 import type { TabManager } from './tab-manager';
 import { type ColorScheme, getActiveColorScheme, onColorSchemeChange } from './theme';
@@ -99,13 +100,8 @@ export class ConnectionForm {
 
   private async checkTurnstileConfig(): Promise<void> {
     try {
-      const response = await fetch('/api/config');
-      const config = (await response.json()) as {
-        turnstileEnabled: boolean;
-        sitekey: string;
-        githubAuthEnabled: boolean;
-        githubAuthRequired: boolean;
-      };
+      const config = await getPublicConfig();
+      if (!config) return;
       this.turnstileEnabled = config.turnstileEnabled;
       this.turnstileSitekey = config.sitekey;
       if (config.githubAuthRequired) {

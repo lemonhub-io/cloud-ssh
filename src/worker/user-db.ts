@@ -110,7 +110,23 @@ export class UserDBDO {
     return rows.length > 0 ? rows[0] : null;
   }
 
+  /**
+   * 架构版本：新增/变更表结构时递增。DO 每次从休眠唤醒都会重跑构造函数，
+   * 以 PRAGMA user_version 守卫可跳过全部幂等 DDL，把每次唤醒的初始化
+   * 从二十余条 SQLite exec 降为一次读取（DO 唤醒与执行时长均计入计费）。
+   */
+  private static readonly SCHEMA_VERSION = 1;
+
   private initSchema(): void {
+    try {
+      const row = this.db.exec('PRAGMA user_version').toArray()[0] as
+        | { user_version?: number }
+        | undefined;
+      if (Number(row?.user_version ?? 0) >= UserDBDO.SCHEMA_VERSION) return;
+    } catch {
+      /* user_version 不可读时按未初始化处理，保持原有全量初始化行为 */
+    }
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS system_config (
         key         TEXT PRIMARY KEY,
@@ -271,6 +287,12 @@ export class UserDBDO {
     // === Migration: 彻底清理已废弃的旧版数据表（解除对 servers 的外键阻碍） ===
     this.db.exec('DROP TABLE IF EXISTS server_memories');
     this.db.exec('DROP TABLE IF EXISTS server_task_checkpoints');
+
+    try {
+      this.db.exec(`PRAGMA user_version = ${UserDBDO.SCHEMA_VERSION}`);
+    } catch {
+      /* pragma 不支持时退化为每次全量初始化 */
+    }
   }
 
   async fetch(request: Request): Promise<Response> {
