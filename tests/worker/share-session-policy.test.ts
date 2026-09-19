@@ -20,7 +20,6 @@ function makeSharedSession() {
       source: 'share',
       shareId: 'share-1',
       shareRef: 'ref-1',
-      allowAgent: false,
       allowSftp: true,
       allowMetadataMutation: false,
       allowHostKeyMutation: false,
@@ -32,10 +31,8 @@ function makeSharedSession() {
 }
 
 describe('分享 SSH 会话能力策略', () => {
-  it('后端拒绝 Agent 和 keyboard-interactive，不依赖前端隐藏按钮', async () => {
-    const { session, sent } = makeSharedSession();
-    await (session as any).handleAgentStart('run something', '1', 'zh-CN');
-    expect(sent.map(String).join('\n')).toContain('分享会话不允许使用 AI Agent');
+  it('后端拒绝 keyboard-interactive，不依赖前端隐藏按钮', async () => {
+    const { session } = makeSharedSession();
     expect((session as any).canUseAuthMethod('keyboard-interactive')).toBe(false);
   });
 

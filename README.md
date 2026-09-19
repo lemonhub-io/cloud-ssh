@@ -88,20 +88,20 @@
 ## 核心特性
 
 <details>
-<summary><b>点击展开查看完整功能特性列表（自研 SSH 协议栈、跳板链、一次性分享、在线 SFTP、AI 运维助手等）</b></summary>
+<summary><b>点击展开查看完整功能特性列表（自研 SSH 协议栈、跳板链、一次性分享、在线 SFTP 等）</b></summary>
 
 - **纯 TypeScript SSH-2.0 实现**：完全自研的 SSH 协议栈，不依赖任何第三方 SSH 库，基于 Web Crypto API 实现全部加密操作。
 - **多算法密钥交换**：支持 Curve25519-SHA256（优先）和 ECDH-NISTP256 两种 KEX 算法，适配各类 SSH 服务器（包括 Dropbear）。
 - **可靠的密钥切换与分包处理**：逐包读取当前加密与认证状态，兼容服务端将 `SSH_MSG_NEWKEYS` 和首个加密包合并在同一 TCP 数据块中返回的情况。
 - **IPv4/IPv6 双栈**：完整支持 IPv4 和 IPv6 地址连接，包括 IPv6 方括号格式自动处理。
 - **多种认证方式**：支持标准 SSH 密码认证、RFC 4256 `keyboard-interactive` 多轮交互认证，以及 OpenSSH 格式的 Ed25519、ECDSA P-256/P-384/P-521 和 RSA 私钥认证。交互认证支持密码、OTP、多字段提示与公钥后的二次验证；服务器提示会在绑定当前连接的安全对话框中展示，已保存密码仅在用户明确选择后代填。RSA 默认使用 RSA-SHA2-256/512，只有显式兼容配置才允许旧 `ssh-rsa` SHA-1。
-- **SSH 跳板机/堡垒机**：登录用户可以为已保存服务器选择另一台已保存服务器作为跳板。CloudSSH 使用标准 RFC 4254 `direct-tcpip` 通道逐层建立 SSH，不依赖远端安装 `ssh`、`nc` 或 `socat`；支持最多 3 级跳转，最终目标的终端、SFTP 与 AI Agent 均复用完整加密链路。每一跳独立认证和验证路径隔离的主机指纹。
-- **一次性 SSH 授权分享**：可选启用登录用户的服务器分享。链接只包含 256 位随机能力凭证，不携带主机、用户名、密码、私钥或跳板信息；凭证仅保存哈希、只能领取一次且具有独立的领取有效期与会话最长时间。分享会话允许终端和 SFTP，服务端强制禁用 AI Agent、OS 检测、主机指纹修改与自动重连；所有者可以实时撤销，并查看仅针对分享会话生成的生命周期、SFTP 操作与终端输出记录。
+- **SSH 跳板机/堡垒机**：登录用户可以为已保存服务器选择另一台已保存服务器作为跳板。CloudSSH 使用标准 RFC 4254 `direct-tcpip` 通道逐层建立 SSH，不依赖远端安装 `ssh`、`nc` 或 `socat`；支持最多 3 级跳转，最终目标的终端与 SFTP 均复用完整加密链路。每一跳独立认证和验证路径隔离的主机指纹。
+- **一次性 SSH 授权分享**：可选启用登录用户的服务器分享。链接只包含 256 位随机能力凭证，不携带主机、用户名、密码、私钥或跳板信息；凭证仅保存哈希、只能领取一次且具有独立的领取有效期与会话最长时间。分享会话允许终端和 SFTP，服务端强制禁用 OS 检测、主机指纹修改与自动重连；所有者可以实时撤销，并查看仅针对分享会话生成的生命周期、SFTP 操作与终端输出记录。
 - **防范中间人攻击 (TOFU)**：首次连接自动提取服务器 Host Key（SHA-256 指纹）并显示，支持 Ed25519/ECDSA/RSA 签名验证，并在本地及 API 持久化缓存已知主机指纹以防范二次连接的欺骗风险。
 - **全功能极客终端**：基于 `@xterm/xterm` 与 `@xterm/addon-webgl` 硬件加速渲染引擎，保证海量日志输出顺滑不卡顿。
 - **可靠的终端剪贴板交互**：鼠标完成终端选区后自动复制，右键可直接粘贴；触摸设备点击快捷键栏的复制按钮进入选择模式，拖动选择文本后再次点击完成复制，避免依赖不稳定的长按选区，粘贴则使用独立按钮。粘贴统一经过 xterm.js 原生输入管线，仅在远端应用启用 bracketed paste 模式时发送对应控制序列，并自动规范化换行，兼容 Vim 等交互式编辑器和普通 Shell。
-- **移动端终端适配**：针对手机和平板提供动态可视高度、软键盘与安全区适配、iOS 中文输入法兼容、紧凑工具栏、一次性 Ctrl/Alt、Esc/Tab/方向键/Home/End/PgUp/PgDn 等快捷键，以及移动端全屏 Agent/SFTP 面板。页面从后台返回后会主动验证 WebSocket，淘汰表面在线但已失效的连接；匿名会话使用当前内存凭据重新建立 SSH，登录用户的已保存服务器则重新申请一次性连接令牌，且只有收到 `shell_ready` 后才恢复“已连接”状态和终端输入。用户可主动尝试“全屏横屏”；浏览器不支持方向锁定时会回退为手动旋转提示，不会强制改变桌面端布局。移动系统若彻底回收网页，当前 Shell 仍无法无缝续接。
-- **个性化 UI**：Theme V4 系统提供 Standard Dark、Standard Light、Cyberpunk 以及参考 macOS 26 液态玻璃质感打造的 Liquid Glass 四款内置主题。V4 支持渐变/网格背景层（含读性遮罩与缓慢漂移动画）、扫描线/闪烁/辉光/噪点效果注册表、独立表面模糊与提饱和档位（`saturate(180%)` + 镜面内发光）与版式缩放，主体风格间差异显著。配套 [GitHub Pages 主题编辑器](https://newbietan.github.io/CloudSSH/)可实时调整颜色、形状、密度、字体、阴影、动效、背景层、效果及按钮/输入框/卡片/标签页样式，并预览登录页、服务器列表、终端 + SFTP 和 AI Agent 面板。主题通过 JSON 文件导入、导出、备份与分享；登录用户在应用中导入后会同步到账号并可跨浏览器恢复，匿名用户仅保存在当前浏览器。
+- **移动端终端适配**：针对手机和平板提供动态可视高度、软键盘与安全区适配、iOS 中文输入法兼容、紧凑工具栏、一次性 Ctrl/Alt、Esc/Tab/方向键/Home/End/PgUp/PgDn 等快捷键，以及移动端全屏 SFTP 面板。页面从后台返回后会主动验证 WebSocket，淘汰表面在线但已失效的连接；匿名会话使用当前内存凭据重新建立 SSH，登录用户的已保存服务器则重新申请一次性连接令牌，且只有收到 `shell_ready` 后才恢复“已连接”状态和终端输入。用户可主动尝试“全屏横屏”；浏览器不支持方向锁定时会回退为手动旋转提示，不会强制改变桌面端布局。移动系统若彻底回收网页，当前 Shell 仍无法无缝续接。
+- **个性化 UI**：Theme V4 系统提供 Standard Dark、Standard Light、Cyberpunk 以及参考 macOS 26 液态玻璃质感打造的 Liquid Glass 四款内置主题。V4 支持渐变/网格背景层（含读性遮罩与缓慢漂移动画）、扫描线/闪烁/辉光/噪点效果注册表、独立表面模糊与提饱和档位（`saturate(180%)` + 镜面内发光）与版式缩放，主体风格间差异显著。配套 [GitHub Pages 主题编辑器](https://newbietan.github.io/CloudSSH/)可实时调整颜色、形状、密度、字体、阴影、动效、背景层、效果及按钮/输入框/卡片/标签页样式，并预览登录页、服务器列表、终端 + SFTP。主题通过 JSON 文件导入、导出、备份与分享；登录用户在应用中导入后会同步到账号并可跨浏览器恢复，匿名用户仅保存在当前浏览器。
 - **SFTP 图形化文件管理**：集成完整的 SFTP v3 文件传输协议，提供图形化文件浏览器界面。工具栏支持路径面包屑分级导航（点击直达父级目录，点击空白切换绝对路径文本输入），列表支持按文件名、大小、修改时间双向排序（目录严格优先置顶）。支持一键新建空白文件并自动唤起 CodeMirror 在线编辑。支持目录浏览、文件上传/下载、新建文件夹、文件重命名与删除等操作；支持普通单选、`Cmd/Ctrl` 切换选择、`Shift` 连选、全选，以及批量下载文件和批量删除。双击文件智能处理（文本文件直接在线编辑，二进制/超大文件自动转串行下载）。内置 CodeMirror 在线编辑器，可直接编辑远端小文本文件（≤2MB，UTF-8 可编辑，GBK/GB18030 自动识别为只读），保留原文件换行符与 BOM，保存前自动检测远端修改并提示冲突确认，支持编辑器页脚自动换行动态切换与偏好持久化，常见配置（shell/YAML/JSON/Python/Markdown/HTML/CSS/Dockerfile/systemd 等）带语法高亮。基于 SSH 子系统实现，与终端会话并行运行，互不干扰，支持下载队列及上传取消。
 - **原生文件传输**：集成 [trzsz.js](https://github.com/trzsz/trzsz.js)，支持 `trz`（上传）/ `tsz`（下载）命令进行文件传输，兼容 tmux 会话。还支持拖拽文件到终端窗口直接上传、目录传输及断点续传等高级功能。（需远程服务器安装 [trzsz](https://trzsz.github.io/)）
 - **中英文界面**：内置简体中文与英文两套 UI 词条，自动跟随浏览器语言并提供手动切换，选择通过 URL 参数或本地存储（`cloudssh_locale`）持久化。
@@ -115,10 +115,6 @@
 - **智能区域调度（locationHint）**：保存直连服务器时通过 IPinfo 查询主机地理信息并持久化 DO 部署区域，连接时直接读取数据库，不再执行外部地理查询；使用 SSH 跳板时仅对 Cloudflare 直接连接的最外层入口进行推断，下游内网服务器不会触发查询，其区域设置由入口统一决定。查询失败时自动退化为 Cloudflare 默认调度，也可为直连入口手动覆盖区域偏好。_注意：自动推断会把直连入口的主机信息发送给第三方 IPinfo；locationHint 是 Cloudflare 的 best-effort 特性，当目标区域 DO 容量不足时会 fallback 到最近可用区域。_
 - **终端文本检索与快捷键**：支持使用快捷键 `Ctrl+Shift+F`（或 macOS 下 `Cmd+F`）呼出搜索框，实时检索终端历史日志；支持使用 `Cmd+K` (macOS) / `Ctrl+Shift+K` (Win/Linux) 一键清空屏幕与滚动历史，保留纯 `Ctrl+K` 行编辑能力不冲突。
 - **终端日志一键导出**：支持通过顶栏的下载按钮，将当前活跃会话终端的完整屏幕历史 buffer 一键导出并下载为 `.txt` 文本文件，解决长日志在浏览器下鼠标选取容易卡顿的痛点。
-- **AI 智能助手与运维工作备忘系统**：内置 AI Agent 侧边栏，支持 BYOK（自带 API Key）接入 OpenAI 兼容接口（如 DeepSeek、GPT-4o、Qwen、Claude 等）。配置面板采用现代化自定义 Combobox 下拉选择器（支持全量展开、即时模糊过滤、一键清空及多套内置主题自适应），支持使用已保存密钥免重复输入 Token 安全拉取模型列表，服务端实现 Base URL 强绑定防凭据外带（Credential Exfiltration）、同源 CSRF 检查与敏感信息脱敏防护。输入框上方提供快捷诊断 Prompt 气泡（Quick Prompt Chips：分析报错、系统负载、网络端口、Docker 状态），一键填充结构化排查提示词并自动聚焦输入框。内置 8 个专业运维工具（执行命令、读取终端上下文、探测环境、进程列表、systemctl 服务管理、Docker 容器管理、用户确认及结构化报告输出）。支持终端划词“询问 AI 助手”独立上下文附件、代码块一键复制及安全单行命令填入终端。支持 LLM 流式输出与思考过程容器折叠，危险操作多级安全拦截与用户确认。
-  - **双轨长期记忆系统**：具备精准时间感知与用户当地时区换算（今天、昨天、N天前）。分为**工作历程（Work Log）**（滚动记录最新运维轨迹，连续排障自动承前启后合并 `update_latest`，防止刷屏碎片化）与**关键知识与凭据备忘（Context Knowledge）**（自动沉淀 Token、密码、端口、路径配置等，后续执行直接带入复用，绝不重复向用户索取；支持键值规范化与原子覆盖更新）。
-  - **长短时记忆职责解耦**：会话内摘要专职跟踪当前未完结任务与决策待办，服务器长期记忆专职持久化运维轨迹与配置实体，杜绝冗余重复。
-  - **内敛抽屉式交互**：提供独立「工作备忘与记忆」抽屉面板，工作历程卡片支持两行文本截断、悬停完整 Tooltip 与点击展开；机密凭据默认掩码呈现，支持一键切换明文、快捷复制与删除。
 - **工程质量门禁**：GitHub Actions 在 `test` 与 `main` 分支部署前依次执行冻结锁文件安装、Worker/前端类型检查、单元与集成测试、可复现前端构建、Playwright 浏览器 E2E 和 axe 无障碍回归；任一环节失败都会阻止部署。
 
 </details>
@@ -134,7 +130,6 @@ flowchart TB
     subgraph "浏览器客户端"
         UI["前端 UI<br/>TypeScript + xterm.js"]
         SFTP["SFTP 文件管理器"]
-        Agent["AI 智能助手"]
         Trzsz["trzsz 文件传输"]
     end
 
@@ -143,7 +138,6 @@ flowchart TB
         SSH_DO["SSHSessionDO<br/>SSH 会话管理"]
         User_DO["UserDBDO<br/>用户数据 / 命令片段 / 长期记忆"]
         Share_DO["SSHShareDO<br/>分享凭证 + 会话审计"]
-        AgentCore["AgentCore<br/>AI 控制循环 + 上下文管理"]
     end
 
     subgraph "目标服务器"
@@ -152,16 +146,12 @@ flowchart TB
 
     UI <-->|"WebSocket<br/>终端 I/O"| Worker
     SFTP <-->|"WebSocket<br/>SFTP 数据"| Worker
-    Agent <-->|"WebSocket<br/>Agent 消息 / 记忆更新"| Worker
     Trzsz <-->|"trzsz 协议"| UI
     Worker <-->|"WebSocket"| SSH_DO
     Worker <-->|"Internal API"| User_DO
     Worker <-->|"领取 / 撤销 / 查看审计"| Share_DO
     SSH_DO -->|"生命周期 / SFTP / 终端输出"| Share_DO
     SSH_DO <-->|"TCP Socket<br/>@cloudflare/sockets"| SSH
-    SSH_DO <-->|"Exec Channel"| AgentCore
-    AgentCore <-->|"Work Logs & Knowledge"| User_DO
-    AgentCore <-->|"LLM API"| External["外部 LLM 服务"]
 ```
 
 <a id="quick-start"></a>
@@ -211,7 +201,7 @@ Fork 仓库可以通过内置的 `Sync upstream` GitHub Actions 工作流，定�
 
 | 环境变量                  | 是否必填       | 默认值       | 作用说明                                                                                               | 配置建议与注意事项                                                                                                                                                                                                                     |
 | ------------------------- | -------------- | ------------ | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `IDLE_TIMEOUT`            | 可选           | `30m`        | 用户无操作空闲超时时长。会话超过该时间无键盘输入、SFTP 操作或 AI 任务将自动断开并释放 Durable Object。 | **强烈建议保留默认或按需配置**。防止离开电脑或忘记关闭标签页无休止消耗 Cloudflare 每日 13,000 GB-s 免费额度。支持 `30m`、`1h`、`1800s`、`1800`（纯数字按秒解析）；设为 `0` 可禁用；超时前 60s 会在终端输出预警，敲击任意键可一秒续期。 |
+| `IDLE_TIMEOUT`            | 可选           | `30m`        | 用户无操作空闲超时时长。会话超过该时间无键盘输入或 SFTP 操作将自动断开并释放 Durable Object。 | **强烈建议保留默认或按需配置**。防止离开电脑或忘记关闭标签页无休止消耗 Cloudflare 每日 13,000 GB-s 免费额度。支持 `30m`、`1h`、`1800s`、`1800`（纯数字按秒解析）；设为 `0` 可禁用；超时前 60s 会在终端输出预警，敲击任意键可一秒续期。 |
 | `GITHUB_CLIENT_ID`        | 启用登录时必填 | 无           | GitHub OAuth 应用的 Client ID，用于开启多用户登录与已保存服务器/命令片段云端管理。                     | 公开 ID。需与 `GITHUB_CLIENT_SECRET` 和 `BASE_URL` 配合使用。未配置时整个登录入口自动隐藏，不影响匿名 SSH 连接。                                                                                                                       |
 | `GITHUB_CLIENT_SECRET`    | 启用登录时必填 | 无           | GitHub OAuth 应用的 Client Secret，用于服务端向 GitHub 安全换取用户访问令牌。                          | **敏感凭据，务必在 Cloudflare Dashboard 中设为 Secret 类型**。严禁泄露或直接提交到公共代码仓库。                                                                                                                                       |
 | `BASE_URL`                | 启用登录时必填 | 无           | 部署站点的完整公网访问根地址（如 `https://ssh.example.com`），用于生成 OAuth 授权回调跳转。            | 域名必须与 GitHub OAuth App 中的 Authorization callback URL 完全一致，末尾**不要**加斜杠 `/`。未配置时降级使用请求上下文 Host。                                                                                                        |
@@ -219,7 +209,7 @@ Fork 仓库可以通过内置的 `Sync upstream` GitHub Actions 工作流，定�
 | `REQUIRE_GITHUB_AUTH`     | 可选           | `false`      | 是否强制 GitHub 登录后才可使用 SSH 终端。设为 `true` 时彻底禁用匿名直连入口。                          | **公网部署防被蹭推荐开启**。若不希望未授权访客将你的 Worker 用作公开 SSH 代理节点，建议配置为 `true` 并配合白名单使用。                                                                                                                |
 | `TURNSTILE_SITEKEY`       | 可选           | 无           | Cloudflare Turnstile 人机验证的前端公开 Site Key。                                                     | 公开密钥。与 `TURNSTILE_SECRET` 配合使用，在未配置或配置任一为空时人机验证功能自动禁用。                                                                                                                                               |
 | `TURNSTILE_SECRET`        | 可选           | 无           | Cloudflare Turnstile 人机验证的服务端 Secret Key，用于校验前端回传的人机验证 Token。                   | **敏感密钥，建议保存为 Secret 类型**。开启后可有效拦截自动化扫描脚本、批量机器人和恶意滥用。                                                                                                                                           |
-| `ENABLE_SSH_SHARING`      | 可选           | `false`      | 是否开启一次性受控 SSH 分享功能。设为 `true` 时登录用户可为已保存服务器生成临时受控分享链接。          | 生产环境按需开启。分享链路仅支持受限终端与可选 SFTP，受完整操作审计记录监督，禁止使用 AI Agent、修改服务器元数据或跨网络重连。                                                                                                         |
+| `ENABLE_SSH_SHARING`      | 可选           | `false`      | 是否开启一次性受控 SSH 分享功能。设为 `true` 时登录用户可为已保存服务器生成临时受控分享链接。          | 生产环境按需开启。分享链路仅支持受限终端与可选 SFTP，受完整操作审计记录监督，禁止修改服务器元数据或跨网络重连。                                                                                                         |
 | `STRICT_HOST_KEY_VERIFY`  | 可选           | `true`       | SSH 远端主机公钥签名严格校验开关。默认 `true`（fail-closed，签名不合法或算法不支持时立即终止握手）。   | **生产环境务必保持默认 `true`**。仅在本地调试、测试自签或老旧不兼容服务器且明确知晓安全风险时才允许设为 `false`。                                                                                                                      |
 | `DEBUG_MODE`              | 可选           | `false`      | 详细调试模式开关。设为 `true` 时在 API 响应和前端终端中输出底层协议握手与诊断日志。                    | `wrangler.toml` 默认声明为 `false`。仅在排查连接握手故障时临时开启，生产环境日常运行建议保持 `false`。                                                                                                                                 |
 
@@ -302,7 +292,7 @@ SSH 跳转不需要额外环境变量，但必须启用 GitHub OAuth 并使用�
 1. 先保存最外层可由 Cloudflare 直接访问的公网跳板服务器 A。
 2. 再保存目标服务器 B，在“跳板服务器”中选择 A；B 可以填写只能从 A 访问的内网地址。
 3. 如需多级路径，例如 C → A → B，可先把 A 的跳板设置为 C，再让 B 选择 A。系统会递归解析路径，最多允许 3 台跳板服务器。
-4. 从服务器列表连接 B。终端、SFTP 和 AI Agent 只在最终目标 B 上运行；任意一跳断开时会重建或关闭整条链路。
+4. 从服务器列表连接 B。终端和 SFTP 只在最终目标 B 上运行；任意一跳断开时会重建或关闭整条链路。
 
 跳板关系必须位于同一 GitHub 用户空间，不能形成自引用或循环。正在被其他服务器引用的跳板不能直接删除。SSRF 公网检查与 Durable Object 区域调度均以 Cloudflare 直接连接的最外层入口为准；只有该入口会执行自动区域推断，选择跳板后下游服务器的区域选项会停用，也不会向 IPinfo 发送其内网主机信息。内网地址只能出现在由服务端解析的已保存跳板链中，匿名连接不能提交跳板配置。每一跳都会独立执行 TOFU 主机指纹验证，内网目标的记录按完整跳转路径隔离。
 
@@ -319,7 +309,6 @@ CloudSSH/
 ├── src/                    # 后端源码 (Cloudflare Worker)
 │   ├── ssh/                # SSH 协议纯实现层（传输、加密、认证、通道、SFTP）
 │   └── worker/             # Worker 入口和 Durable Objects
-│       ├── agent/          # AI Agent 控制循环、工具、安全检测
 │       ├── dns-check.ts    # DNS 防重绑定 SSRF 防护
 │       ├── ip-geo.ts       # IPinfo 区域推断 → locationHint
 │       ├── share-audit-writer.ts # 分享审计事件写入、防抖与并发控制
@@ -327,7 +316,6 @@ CloudSSH/
 │       └── ssh-detached-buffer.ts   # 弱网断线保持 128KB 缓冲队列
 ├── frontend/               # 前端源码 (独立 workspace)
 │   └── src/                # TypeScript + xterm.js + trzsz
-│       ├── agent/          # AI 助手侧边栏 UI
 │       ├── i18n/           # 中英文词条与语言解析
 │       ├── sftp-editor-session.ts # SFTP 在线编辑协调器
 │       ├── sftp-helpers.ts        # SFTP 面包屑解析与多维排序
@@ -436,7 +424,7 @@ test 分支（开发/测试）  ──合并──>  main 分支（生产）
 
 | 贡献者                                               | 主要贡献                                                                                                                 |
 | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| [TanXin (@newbietan)](https://github.com/newbietan)  | 项目发起与持续维护；Cloudflare Serverless、SSH/SFTP、AI Agent、安全体系、主题系统及工程化建设                            |
+| [TanXin (@newbietan)](https://github.com/newbietan)  | 项目发起与持续维护；Cloudflare Serverless、SSH/SFTP、安全体系、主题系统及工程化建设                            |
 | [David xu (@xqdoo00o)](https://github.com/xqdoo00o)  | Dropbear 兼容、trzsz 文件传输迁移、PTY 尺寸处理，以及会话退出与重连交互优化                                              |
 | [vonl1 (@vonl1)](https://github.com/vonl1)           | 终端选区自动复制、兼容 Vim 的右键粘贴体验、服务器 IPv4/IPv6 掩码与完整地址快捷复制，以及服务器操作系统自动识别与品牌图标 |
 | [Leon Xu (@xuthuslei)](https://github.com/xuthuslei) | 修复 `SSH_MSG_NEWKEYS` 与首个加密包同批到达时的加密状态切换和数据包解析兼容问题；修复 v1.11.0 跳板认证时序回归（#108）   |

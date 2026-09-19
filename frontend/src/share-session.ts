@@ -70,7 +70,6 @@ function buildShareLandingCard(): HTMLElement {
   for (const key of [
     'share.noticeOneTime',
     'share.noticeAudited',
-    'share.noticeNoAgent',
     'share.noticeNoReconnect',
   ] as const) {
     noticeList.append(el('li', undefined, t(key)));

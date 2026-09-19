@@ -10,8 +10,6 @@ tests/
 ├── e2e/                           # Chromium 浏览器交互与 axe 无障碍检查
 ├── ssh/                           # SSH 算法、认证、加密、KEX、Packet 与测试密钥夹具
 ├── worker/                        # Worker 路由、安全、DNS、UserDB 与标签测试
-├── agent-code-actions.test.ts # Agent 代码块复制/填入规则
-├── agent-terminal-selection.test.ts # 终端选区附件和非授权安全边界
 ├── api-errors.test.ts          # API 错误信息边界与状态码
 ├── auth-challenge-dialog.test.ts # RFC 4256 认证挑战对话框交互
 ├── clipboard.test.ts              # Clipboard API 与旧版复制回退
@@ -85,11 +83,9 @@ pnpm run verify
 - Turnstile 验证 token 的结构、过期时间和 HMAC
 - Origin 检查、端口范围、连接令牌和错误信息边界
 - IPv4/IPv6 保留地址、DoH 解析与 DNS rebinding 防护
-- Agent 危险命令拦截、确认规则和 SSRF URL 校验
 - 主机密钥信任：首见指纹确认、更换指纹阻断与路由作用域隔离
 - 键盘交互认证、OS 检测、跳板链、SFTP 上传冲突、分享会话策略
 - UserDB 服务器标签/片段迁移、规范化、序列化、更新与隔离
-- AI 模型代理安全：同 Base URL 强绑定免密拉取、跨地址凭据外带拦截（Credential Exfiltration）、CSRF Origin 防护与敏感 Token 脱敏
 
 ### 前端与构建
 
@@ -99,10 +95,8 @@ pnpm run verify
 - 命令片段库：实时模糊搜索、一键复制到剪贴板与 `{{var}}` 动态参数占位符弹窗录入
 - SFTP 生产力：路径面包屑分级导航、表头多维排序（文件名/大小/时间）、新建 0 字节文件与 CodeMirror 在线编辑联动
 - SFTP 单选、Cmd/Ctrl 多选、Shift 连选和全选
-- Agent 终端选区附件、问题组合、快捷诊断 Prompt 气泡（Chips）和非授权安全边界
 - 终端选区自动复制、指针取消和旧版复制回退
 - i18n、Theme V3 主题（背景/效果/版式钳制、对比度与 schema）、终端状态/文本、已知主机与片段本地存储
-- AI 配置与模型选择：自定义 Combobox 下拉组件（全量展开、即时过滤、一键清空、多主题自适应）、免密拉取联动与敏感凭证即时清理
 - 构建可复现性、xterm 生产构建兼容和原生弹窗禁用
 
 ### 浏览器 E2E
@@ -111,15 +105,13 @@ pnpm run verify
 - 服务器弹窗的基本对话框语义、初始焦点和 Escape 关闭
 - 服务器标签筛选、分页与配置快速克隆
 - 多标签操作：双击内联重命名、空值与失焦恢复、右键菜单项与外部点击关闭
-- Agent 终端选区附件与快捷诊断 Prompt 气泡点击填入
 - 终端选区复制与焦点恢复
 - 认证挑战对话框、iOS 输入法、移动端后台连接恢复与分享会话领取
 - SFTP 覆盖确认、路径面包屑、表头排序、新建文件、主题样式与 UI 回归
-- AI 模型下拉选择（Combobox 展开、选项切换、清空、免密拉取与浅色/暗色主题自适应切换）
 
 ## 当前限制
 
 - Playwright 的完整界面与无障碍回归主要运行 Chromium；认证挑战、iOS 输入法和移动端后台连接恢复另在 WebKit 设备项目中执行。Firefox 尚未纳入当前质量门禁。
 - 浏览器 E2E 主要通过 mock API 验证前端行为，尚未连接真实 OpenSSH/Dropbear 和 SFTP 服务。
-- SSHSessionDO、SSH 会话状态机、SFTP 数据流和 AgentCore 等运行态模块的覆盖率仍偏低。
+- SSHSessionDO、SSH 会话状态机和 SFTP 数据流等运行态模块的覆盖率仍偏低。
 - 新增协议状态、WebSocket 消息或安全边界时，应优先补充运行时错误、取消、超时和畸形输入测试，而不仅验证成功路径。

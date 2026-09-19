@@ -309,80 +309,17 @@ test('终端字号随手机、触屏平板和桌面宽度调整且不受文本�
   });
 });
 
-test('移动端 Agent 可返回终端且 SFTP 面板占满可用区域', async ({ page }) => {
-  await mockAnonymousSession(page);
-  await page.goto('/?lang=zh-CN');
-  await expect(page.locator('#connection-form')).toBeVisible();
-
-  const dimensions = await page.evaluate(async () => {
-    document.getElementById('auth-section')?.classList.add('hidden');
-    const terminalSection = document.getElementById('terminal-section')!;
-    terminalSection.classList.remove('hidden');
-    terminalSection.classList.add('flex');
-    document.body.classList.add('terminal-active');
-
-    const agentModule = await (window as any).eval("import('/src/agent/agent-panel.ts')");
-    const agent = new agentModule.AgentPanel(document.getElementById('terminal-area')!, true);
-    agent.render();
-    agent.show();
-    (window as any).__mobileAgentPanel = agent;
-
-    const sftp = document.createElement('div');
-    sftp.id = 'sftp-panel';
-    sftp.style.cssText = 'position:fixed;top:0;right:0;';
-    document.body.appendChild(sftp);
-
-    const agentElement = document.getElementById('agent-panel')!;
-    const agentRect = agentElement.getBoundingClientRect();
-    const headerRect = agentElement.querySelector('.agent-panel-header')!.getBoundingClientRect();
-    const sftpRect = sftp.getBoundingClientRect();
-    return {
-      agentWidth: Math.round(agentRect.width),
-      agentHeight: Math.round(agentRect.height),
-      agentTop: Math.round(agentRect.top),
-      agentHeaderTop: Math.round(headerRect.top),
-      sftpWidth: Math.round(sftpRect.width),
-      sftpHeight: Math.round(sftpRect.height),
-    };
-  });
-
-  expect(dimensions.agentWidth).toBe(390);
-  expect(dimensions.agentHeight).toBeGreaterThan(0);
-  expect(dimensions.agentTop).toBe(48);
-  expect(dimensions.agentHeaderTop).toBe(48);
-  expect(dimensions.sftpWidth).toBe(390);
-  expect(dimensions.sftpHeight).toBeGreaterThan(0);
-
-  // 移动端打开 Agent 面板时，底部的终端快捷键工具栏应自动隐藏，防止遮挡输入框
-  await expect(page.locator('#mobile-terminal-toolbar')).toBeHidden();
-
-  const backButton = page.locator('#agent-close-btn');
-  await expect(backButton).toBeVisible();
-  await expect(backButton).toContainText('返回终端');
-  await expect(backButton).toHaveAttribute('title', '返回终端');
-  await expect(backButton).toHaveAttribute('aria-label', '返回终端');
-  await page.locator('#sftp-panel').evaluate((element) => element.remove());
-  await backButton.click();
-  await expect(page.locator('#agent-panel')).toBeHidden();
-  await expect(page.locator('#terminal-wrapper')).toBeVisible();
-
-  // 返回终端后，终端快捷键工具栏应重新显示
-  await expect(page.locator('#mobile-terminal-toolbar')).toBeVisible();
-});
-
 /**
  * 移动端抽屉入口回归：
  *
- * e406aa4 把 SFTP / 自定义命令 / AI Agent 三个抽屉按钮收进
+ * e406aa4 把 SFTP / 自定义命令抽屉按钮收进
  * #terminal-drawer-segmented-bar，并给该容器加了 .desktop-terminal-action
  * （移动端 display: none !important）。但当时没有在 #mobile-more-menu 里补平行入口，
- * 于是移动端用户彻底失去了 SFTP 与 AI Agent 的打开方式（分段条整体被隐藏）。
+ * 于是移动端用户彻底失去了 SFTP 的打开方式（分段条整体被隐藏）。
  *
- * 本用例锁定两条不变式：
- * 1. 移动端分段条隐藏时，菜单里必须存在 SFTP 与 AI Agent 的平行入口；
- * 2. 登录后 #mobile-agent-btn 的解锁状态必须与桌面 #agent-toggle-btn 同步。
+ * 本用例锁定不变式：移动端分段条隐藏时，菜单里必须存在 SFTP 与自定义命令的平行入口。
  */
-test('移动端保留 SFTP 与 AI Agent 抽屉入口，分段条为桌面专属', async ({ page }) => {
+test('移动端保留 SFTP 与自定义命令抽屉入口，分段条为桌面专属', async ({ page }) => {
   await mockAnonymousSession(page);
   await page.goto(
     `/?wsUrl=${encodeURIComponent('ws://127.0.0.1:4173/fake')}&name=Drawer&host=127.0.0.1&port=22&lang=zh-CN`
@@ -396,25 +333,4 @@ test('移动端保留 SFTP 与 AI Agent 抽屉入口，分段条为桌面专属'
   await expect(page.locator('#mobile-more-menu')).toBeVisible();
   await expect(page.locator('#mobile-sftp-btn')).toBeVisible();
   await expect(page.locator('#mobile-snippets-btn')).toBeVisible();
-  // 匿名模式不提供 AI Agent（与桌面 #agent-toggle-btn 初始 hidden 一致）
-  await expect(page.locator('#mobile-agent-btn')).toBeHidden();
-  await expect(page.locator('#agent-toggle-btn')).toHaveClass(/hidden/);
-});
-
-test('登录后移动端 AI Agent 入口与桌面按钮同步解锁', async ({ page }) => {
-  await page.route('**/api/auth/me', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ id: 1, github_id: 42, username: 'tester', avatar_url: '' }),
-    })
-  );
-  await page.route('**/api/servers', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
-  );
-  await page.goto('/?lang=zh-CN');
-  await expect(page.locator('#user-space-more-btn')).toBeVisible();
-
-  await expect(page.locator('#agent-toggle-btn')).not.toHaveClass(/hidden/);
-  await expect(page.locator('#mobile-agent-btn')).not.toHaveClass(/hidden/);
 });

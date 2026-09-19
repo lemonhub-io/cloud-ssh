@@ -1,6 +1,6 @@
 /**
  * Apple macOS 26 抽屉式功能模块分段切换器（Liquid Segmented Drawer Control）
- * 将 SFTP 文件管理、Command Snippets 自定义命令与 AI Agent 整合为分段药丸胶囊，
+ * 将 SFTP 文件管理与 Command Snippets 自定义命令整合为分段药丸胶囊，
  * 配备双边异步物理弹簧（Asymmetric Dual-Edge Springs）驱动的液态透镜滑块。
  */
 

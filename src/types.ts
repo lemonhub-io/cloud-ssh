@@ -78,7 +78,6 @@ export interface SSHSessionPolicy {
   shareId: string;
   /** 用于定位独立 SSHShareDO 的不透明引用，不包含用户或服务器信息。 */
   shareRef: string;
-  allowAgent: false;
   allowSftp: boolean;
   allowMetadataMutation: false;
   allowHostKeyMutation: false;

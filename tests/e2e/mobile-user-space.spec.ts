@@ -43,9 +43,6 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/servers', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(servers) })
   );
-  await page.route('**/api/ai/config', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '{"configured":false}' })
-  );
 });
 
 test('移动端用户空间保持单行顶栏并通过菜单访问次要操作', async ({ page }) => {
@@ -175,27 +172,4 @@ test('移动端服务器卡片不会被长文本撑宽且表单弹窗在视口�
   await page.locator('#server-submit-btn').focus();
   await page.keyboard.press('Escape');
   await expect(page.locator('#server-modal')).toBeHidden();
-});
-
-test('移动端 AI 设置弹窗完整位于可视区域内', async ({ page }) => {
-  await page.goto('/?lang=zh-CN');
-  await page.locator('#user-space-more-btn').click();
-  await page.locator('#ai-config-btn').click();
-
-  const panel = page.locator('#ai-config-modal .responsive-modal-panel');
-  await expect(panel).toBeVisible();
-  const layout = await panel.evaluate((element) => {
-    const rect = element.getBoundingClientRect();
-    return {
-      top: Math.round(rect.top),
-      bottom: Math.round(rect.bottom),
-      overflowY: getComputedStyle(element).overflowY,
-      inputFontSize: getComputedStyle(document.getElementById('ai-base-url')!).fontSize,
-    };
-  });
-
-  expect(layout.top).toBeGreaterThanOrEqual(0);
-  expect(layout.bottom).toBeLessThanOrEqual(568);
-  expect(layout.overflowY).toBe('auto');
-  expect(layout.inputFontSize).toBe('16px');
 });

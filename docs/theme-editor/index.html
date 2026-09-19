@@ -358,8 +358,6 @@
       --modal-overlay: rgba(0, 0, 0, 0.8);
       --on-surface: #e5e2e1;
       --on-surface-variant: #bbccb0;
-      --agent-user-color: #4af626;
-      --agent-agent-color: #14d1ff;
       --font-ui: 'JetBrains Mono', ui-monospace, monospace;
       --font-size-scale: 0.94;
       --space-scale: 0.84;
@@ -514,8 +512,7 @@
       .login-box,
       .server-card-mock,
       .terminal-preview,
-      .sftp-preview,
-      .agent-preview
+      .sftp-preview
     ) {
       border-radius: var(--card-radius);
       box-shadow: var(--shadow-card);
@@ -530,8 +527,7 @@
     .theme-scope :is(
       .login-field .input-line,
       .search-box,
-      .sftp-toolbar .path-input,
-      .agent-input
+      .sftp-toolbar .path-input
     ) {
       border-radius: var(--control-radius);
       padding: var(--control-padding-y) var(--control-padding-x);
@@ -541,9 +537,7 @@
       .connect-btn,
       .cards-header .add-btn,
       .card-connect,
-      .sftp-action-btn,
-      .agent-send-btn,
-      .agent-md-code-action
+      .sftp-action-btn
     ) {
       border-radius: var(--control-radius);
       padding: var(--control-padding-y) var(--control-padding-x);
@@ -566,8 +560,7 @@
     .theme-scope[data-component-input="underline"] :is(
       .login-field .input-line,
       .search-box,
-      .sftp-toolbar .path-input,
-      .agent-input
+      .sftp-toolbar .path-input
     ) {
       background: transparent;
       border: 0;
@@ -578,8 +571,7 @@
     .theme-scope[data-component-input="boxed"] :is(
       .login-field .input-line,
       .search-box,
-      .sftp-toolbar .path-input,
-      .agent-input
+      .sftp-toolbar .path-input
     ) {
       background: color-mix(in srgb, var(--bg-terminal) 88%, var(--bg-surface));
       border: 1px solid var(--border-strong);
@@ -589,8 +581,7 @@
       .connect-btn,
       .cards-header .add-btn,
       .card-connect,
-      .sftp-action-btn,
-      .agent-send-btn
+      .sftp-action-btn
     ) {
       color: var(--accent);
       background: transparent;
@@ -601,8 +592,7 @@
       .connect-btn,
       .cards-header .add-btn,
       .card-connect,
-      .sftp-action-btn,
-      .agent-send-btn
+      .sftp-action-btn
     ) {
       color: var(--on-accent);
       background: var(--accent);
@@ -613,24 +603,23 @@
       .connect-btn,
       .cards-header .add-btn,
       .card-connect,
-      .sftp-action-btn,
-      .agent-send-btn
+      .sftp-action-btn
     ) {
       color: var(--accent);
       background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface));
       border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
     }
 
-    .theme-scope[data-component-card="flat"] :is(.login-box, .server-card-mock, .agent-preview) {
+    .theme-scope[data-component-card="flat"] :is(.login-box, .server-card-mock) {
       border-color: transparent;
       box-shadow: none;
     }
 
-    .theme-scope[data-component-card="outlined"] :is(.login-box, .server-card-mock, .agent-preview) {
+    .theme-scope[data-component-card="outlined"] :is(.login-box, .server-card-mock) {
       border-color: var(--border);
     }
 
-    .theme-scope[data-component-card="elevated"] :is(.login-box, .server-card-mock, .agent-preview) {
+    .theme-scope[data-component-card="elevated"] :is(.login-box, .server-card-mock) {
       background: color-mix(in srgb, var(--bg-surface) 96%, var(--accent) 4%);
       border-color: color-mix(in srgb, var(--border) 72%, transparent);
     }
@@ -972,29 +961,6 @@
     .terminal-body .white { color: var(--text); }
     .terminal-body .prompt { color: var(--accent); font-weight: 600; }
     .terminal-body .path { color: var(--accent-secondary); }
-
-    .ask-ai-selection-preview {
-      position: absolute;
-      right: 18px;
-      bottom: 16px;
-      z-index: 3;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: 4px 7px;
-      color: var(--accent);
-      background: var(--bg-elevated);
-      border: 1px solid var(--accent);
-      border-radius: 4px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-      font-size: 9px;
-      font-weight: 700;
-      white-space: nowrap;
-    }
-
-    .ask-ai-selection-preview .material-symbols-outlined {
-      font-size: 13px;
-    }
 
     .terminal-input-mock {
       display: flex;
@@ -1674,268 +1640,6 @@
       background: var(--bg-elevated);
     }
 
-    /* ===== Agent Panel Preview ===== */
-    .preview-grid .col-agent {
-      grid-column: 1 / -1;
-    }
-
-    .agent-preview {
-      background: var(--bg);
-      border-left: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      height: 100%;
-      min-height: 260px;
-    }
-
-    .agent-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 8px 12px;
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-elevated);
-    }
-
-    .agent-header-title {
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      color: var(--accent-secondary);
-    }
-
-    .agent-close-icon {
-      font-size: 14px;
-      color: var(--text-muted);
-      cursor: pointer;
-    }
-
-    .agent-messages {
-      flex: 1;
-      padding: 10px 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      overflow: hidden;
-    }
-
-    /* User message bubble */
-    .agent-msg-user {
-      display: flex;
-      justify-content: flex-end;
-      gap: 6px;
-      align-items: flex-start;
-    }
-
-    .agent-msg-user .agent-msg-text {
-      background: color-mix(in srgb, var(--agent-user-color) 12%, transparent);
-      border: 1px solid color-mix(in srgb, var(--agent-user-color) 30%, transparent);
-      padding: 6px 10px;
-      border-radius: 6px;
-      font-size: 11px;
-      color: var(--agent-user-color);
-      max-width: 70%;
-    }
-
-    .agent-icon-user {
-      font-size: 14px;
-      color: var(--agent-user-color);
-      margin-top: 2px;
-      flex-shrink: 0;
-    }
-
-    /* Agent message */
-    .agent-msg-agent {
-      display: flex;
-      gap: 8px;
-      align-items: flex-start;
-    }
-
-    .agent-icon-bot {
-      font-size: 14px;
-      color: var(--agent-agent-color);
-      margin-top: 2px;
-      flex-shrink: 0;
-    }
-
-    .agent-response-body {
-      font-size: 11px;
-      color: var(--on-surface);
-      line-height: 1.5;
-    }
-
-    .agent-response-body h3 {
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--agent-agent-color);
-      margin-bottom: 6px;
-    }
-
-    .agent-response-body p {
-      margin-top: 6px;
-    }
-
-    .agent-table {
-      border-collapse: collapse;
-      width: 100%;
-      font-size: 10px;
-      margin: 4px 0;
-    }
-
-    .agent-table th,
-    .agent-table td {
-      padding: 3px 8px;
-      border-bottom: 1px solid color-mix(in srgb, var(--agent-agent-color) 20%, transparent);
-      text-align: left;
-    }
-
-    .agent-table th {
-      font-weight: 700;
-      color: var(--agent-agent-color);
-      background: color-mix(in srgb, var(--agent-agent-color) 10%, transparent);
-    }
-
-    .agent-response-body .agent-md-code-block {
-      margin-top: 8px;
-      overflow: hidden;
-      background: color-mix(in srgb, var(--agent-agent-color) 8%, transparent);
-      border: 1px solid color-mix(in srgb, var(--agent-agent-color) 15%, transparent);
-      border-radius: 6px;
-    }
-
-    .agent-response-body .agent-md-code-toolbar {
-      min-height: 28px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 3px 5px 3px 8px;
-      border-bottom: 1px solid color-mix(in srgb, var(--agent-agent-color) 12%, transparent);
-    }
-
-    .agent-response-body .agent-md-lang {
-      color: var(--agent-agent-color);
-      font-size: 9px;
-      opacity: 0.65;
-      flex-shrink: 0;
-    }
-
-    .agent-response-body .agent-md-code-meta {
-      min-width: 0;
-      flex: 1;
-      overflow: hidden;
-      color: var(--on-surface-variant);
-      font-size: 9px;
-      text-align: right;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .agent-response-body .agent-md-code-actions {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      flex-shrink: 0;
-    }
-
-    .agent-response-body .agent-md-code-action {
-      min-height: 22px;
-      display: inline-flex;
-      align-items: center;
-      gap: 3px;
-      padding: 2px 5px;
-      color: var(--agent-agent-color);
-      background: color-mix(in srgb, var(--agent-agent-color) 6%, transparent);
-      border: 1px solid color-mix(in srgb, var(--agent-agent-color) 22%, transparent);
-      border-radius: 4px;
-      font: inherit;
-      font-size: 9px;
-    }
-
-    .agent-response-body .agent-md-code-action .material-symbols-outlined {
-      font-size: 12px;
-    }
-
-    .agent-response-body .agent-md-pre {
-      margin: 0;
-      padding: 8px 10px;
-      overflow-x: auto;
-      color: var(--agent-agent-color);
-      font-size: 10px;
-      white-space: pre-wrap;
-    }
-
-    /* Thinking Process (collapsed) */
-    .tp-container {
-      border: 1px solid color-mix(in srgb, var(--agent-agent-color) 20%, transparent);
-      border-radius: 6px;
-      overflow: hidden;
-    }
-
-    .tp-header {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      padding: 6px 10px;
-      background: color-mix(in srgb, var(--agent-agent-color) 6%, transparent);
-      font-size: 10px;
-    }
-
-    .tp-header .tp-chevron {
-      font-size: 12px;
-      color: var(--text-muted);
-    }
-
-    .tp-header .tp-icon {
-      font-size: 14px;
-      color: var(--agent-agent-color);
-    }
-
-    .tp-status-text {
-      color: var(--on-surface-variant);
-      font-weight: 600;
-    }
-
-    /* Input bar */
-    .agent-input-bar {
-      display: flex;
-      gap: 8px;
-      align-items: flex-end;
-      padding: 8px 12px;
-      border-top: 1px solid var(--border);
-      background: var(--bg-elevated);
-    }
-
-    .agent-input {
-      flex: 1;
-      background: var(--bg-surface);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 6px 10px;
-      font-size: 11px;
-      color: var(--on-surface);
-      resize: none;
-      font-family: inherit;
-      min-height: 32px;
-    }
-
-    .agent-input::placeholder {
-      color: var(--on-surface-variant);
-      opacity: 0.7;
-    }
-
-    .agent-send-btn {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      border: none;
-      background: var(--accent);
-      color: var(--on-accent);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      flex-shrink: 0;
-    }
 
     /* ===== Shared latest-project controls ===== */
     .language-toggle {
@@ -2082,8 +1786,7 @@
         grid-template-columns: 1fr;
       }
 
-      .preview-grid .col-terminal,
-      .preview-grid .col-agent {
+      .preview-grid .col-terminal {
         grid-column: 1;
       }
     }
@@ -2531,10 +2234,6 @@
                   <div class="line white"> </div>
                   <div class="line"><span class="prompt">root@server</span><span class="white">:</span><span class="path">~</span><span class="white">$ </span><span class="cursor-block"></span></div>
                 </div>
-                <div class="ask-ai-selection-preview">
-                  <span class="material-symbols-outlined" aria-hidden="true">quick_phrases</span>
-                  <span data-i18n="terminal.askAISelection">询问 AI 助手</span>
-                </div>
               </div>
               <!-- SFTP Panel (Right Side) -->
               <div class="sftp-preview">
@@ -2619,75 +2318,6 @@
           </div>
         </div>
 
-      <!-- AI Agent Panel (Below, Full Width) -->
-      <div class="preview-section col-agent">
-        <div class="preview-label" data-i18n="preview.agent">AI Agent 面板（思考进度）</div>
-        <div class="preview-frame">
-          <div class="agent-preview">
-            <!-- Agent Panel Header -->
-            <div class="agent-header">
-              <span class="agent-header-title" data-i18n="agent.title">AI Agent 助手</span>
-              <span class="material-symbols-outlined agent-close-icon">close</span>
-            </div>
-            <!-- Message List -->
-            <div class="agent-messages">
-              <!-- User Message -->
-              <div class="agent-msg-user">
-                <span class="agent-msg-text" data-i18n="agent.sampleRequest">帮我检查服务器的配置信息</span>
-                <span class="material-symbols-outlined agent-icon-user" style="font-variation-settings:'FILL' 1">person</span>
-              </div>
-              <!-- Thinking Process Container (Collapsed) -->
-              <div class="tp-container">
-                <div class="tp-header">
-                  <span class="material-symbols-outlined tp-chevron">expand_more</span>
-                  <span class="material-symbols-outlined tp-icon" style="font-variation-settings:'FILL' 1">check_circle</span>
-                  <span class="tp-status-text" data-i18n="agent.completedSteps">已完成 5 个步骤</span>
-                </div>
-              </div>
-              <!-- Agent Response (Markdown) -->
-              <div class="agent-msg-agent">
-                <span class="material-symbols-outlined agent-icon-bot" style="font-variation-settings:'FILL' 1">smart_toy</span>
-                <div class="agent-response-body">
-                  <h3 data-i18n="agent.sampleTitle">服务器配置信息汇总</h3>
-                  <table class="agent-table">
-                    <tr><th data-i18n="agent.item">项目</th><th data-i18n="agent.value">值</th></tr>
-                    <tr><td data-i18n="agent.os">操作系统</td><td>Ubuntu 24.04.4 LTS</td></tr>
-                    <tr><td data-i18n="agent.kernel">内核版本</td><td>Linux 6.8.0 x86_64</td></tr>
-                    <tr><td>CPU</td><td>1 vCPU @ 2494 MHz</td></tr>
-                    <tr><td data-i18n="agent.memory">内存</td><td>512 MiB (45% used)</td></tr>
-                  </table>
-                  <p data-i18n="agent.sampleAdvice">建议先检查服务状态：</p>
-                  <div class="agent-md-code-block">
-                    <div class="agent-md-code-toolbar">
-                      <span class="agent-md-lang">bash</span>
-                      <span class="agent-md-code-meta" data-i18n-template="agent.codeTarget" data-value="Production · root@192.168.1.10:22">目标：Production · root@192.168.1.10:22</span>
-                      <div class="agent-md-code-actions">
-                        <button class="agent-md-code-action" type="button">
-                          <span class="material-symbols-outlined" aria-hidden="true">content_copy</span>
-                          <span data-i18n="agent.codeCopy">复制</span>
-                        </button>
-                        <button class="agent-md-code-action" type="button">
-                          <span class="material-symbols-outlined" aria-hidden="true">input</span>
-                          <span data-i18n="agent.codeFill">填入终端</span>
-                        </button>
-                      </div>
-                    </div>
-                    <pre class="agent-md-pre"><code>systemctl status nginx</code></pre>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <!-- Input Area -->
-            <div class="agent-input-bar">
-              <textarea class="agent-input" data-i18n-placeholder="agent.placeholder" placeholder="描述你希望 Agent 完成的任务…" readonly></textarea>
-              <button class="agent-send-btn">
-                <span class="material-symbols-outlined" style="font-size:14px">arrow_upward</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
       </div>
     </div>
   </div>
@@ -2714,7 +2344,6 @@ const TRANSLATIONS = {
     'preview.userSpace': '用户空间',
     'preview.modal': '（弹窗预览）',
     'preview.terminalSftp': '终端与 SFTP',
-    'preview.agent': 'AI Agent 面板（思考进度）',
     'common.optional': '可选',
     'common.password': '密码',
     'common.privateKey': '私钥',
@@ -2749,7 +2378,6 @@ const TRANSLATIONS = {
     'terminal.wsSendingCredentials': '[+] WebSocket 已连接，正在发送凭据…',
     'terminal.wsAuthenticating': '[*] WebSocket 已连接，正在认证…',
     'terminal.authSuccess': '[*] 认证成功',
-    'terminal.askAISelection': '询问 AI 助手',
     'sftp.title': 'SFTP 文件管理器',
     'sftp.uploadAction': '上传文件',
     'sftp.mkdirAction': '新建文件夹',
@@ -2758,20 +2386,6 @@ const TRANSLATIONS = {
     'sftp.renameAction': '重命名',
     'sftp.ready': '就绪',
     'sftp.count': '2 个目录，4 个文件',
-    'agent.title': 'AI Agent 助手',
-    'agent.sampleRequest': '帮我检查服务器的配置信息',
-    'agent.completedSteps': '已完成 5 个步骤',
-    'agent.sampleTitle': '服务器配置信息汇总',
-    'agent.item': '项目',
-    'agent.value': '值',
-    'agent.os': '操作系统',
-    'agent.kernel': '内核版本',
-    'agent.memory': '内存',
-    'agent.sampleAdvice': '建议先检查服务状态：',
-    'agent.codeTarget': '目标：{value}',
-    'agent.codeCopy': '复制',
-    'agent.codeFill': '填入终端',
-    'agent.placeholder': '描述你希望 Agent 完成的任务…',
     'feedback.imported': '主题导入成功。',
     'feedback.exported': '主题 JSON 已导出。',
     'feedback.missingUi': '主题文件不包含有效的颜色、终端或外观配置。',
@@ -2847,7 +2461,6 @@ const TRANSLATIONS = {
     'group.borders': '边框',
     'group.error': '错误状态',
     'group.components': '组件',
-    'group.agent': 'AI Agent',
     'group.effects': '视觉效果',
     'variable.bg': '页面背景',
     'variable.bgSurface': '卡片 / 表面',
@@ -2868,8 +2481,6 @@ const TRANSLATIONS = {
     'variable.scrollbarTrack': '滚动条轨道',
     'variable.scrollbarThumb': '滚动条滑块',
     'variable.scrollbarThumbHover': '滚动条悬停',
-    'variable.agentUser': '用户消息',
-    'variable.agentBot': 'Agent 消息',
     'variable.scanline': '扫描线叠层',
     'variable.accentGlow': '强调色光晕',
     'variable.accentBg': '强调色背景',
@@ -2893,7 +2504,6 @@ const TRANSLATIONS = {
     'preview.userSpace': 'USER SPACE',
     'preview.modal': '(MODAL PREVIEW)',
     'preview.terminalSftp': 'TERMINAL + SFTP',
-    'preview.agent': 'AI AGENT PANEL (THINKING PROGRESS)',
     'common.optional': 'Optional',
     'common.password': 'PASSWORD',
     'common.privateKey': 'PRIVATE KEY',
@@ -2928,7 +2538,6 @@ const TRANSLATIONS = {
     'terminal.wsSendingCredentials': '[+] WebSocket connected, sending credentials…',
     'terminal.wsAuthenticating': '[*] WebSocket connected, authenticating…',
     'terminal.authSuccess': '[*] Authentication successful',
-    'terminal.askAISelection': 'Ask AI assistant',
     'sftp.title': 'SFTP FILE MANAGER',
     'sftp.uploadAction': 'UPLOAD',
     'sftp.mkdirAction': 'MKDIR',
@@ -2937,20 +2546,6 @@ const TRANSLATIONS = {
     'sftp.renameAction': 'RENAME',
     'sftp.ready': 'Ready',
     'sftp.count': '2 dirs, 4 files',
-    'agent.title': 'AI AGENT ASSISTANT',
-    'agent.sampleRequest': 'Check the server configuration for me',
-    'agent.completedSteps': 'Completed 5 steps',
-    'agent.sampleTitle': 'Server configuration summary',
-    'agent.item': 'Item',
-    'agent.value': 'Value',
-    'agent.os': 'Operating system',
-    'agent.kernel': 'Kernel',
-    'agent.memory': 'Memory',
-    'agent.sampleAdvice': 'Check the service status first:',
-    'agent.codeTarget': 'Target: {value}',
-    'agent.codeCopy': 'Copy',
-    'agent.codeFill': 'Fill terminal',
-    'agent.placeholder': 'Describe what you want the Agent to do…',
     'feedback.imported': 'Theme imported.',
     'feedback.exported': 'Theme JSON exported.',
     'feedback.missingUi': 'The theme file has no valid color, terminal, or appearance settings.',
@@ -3026,7 +2621,6 @@ const TRANSLATIONS = {
     'group.borders': 'BORDERS',
     'group.error': 'ERROR',
     'group.components': 'COMPONENTS',
-    'group.agent': 'AI AGENT',
     'group.effects': 'EFFECTS',
     'variable.bg': 'Page Background',
     'variable.bgSurface': 'Card / Surface',
@@ -3047,8 +2641,6 @@ const TRANSLATIONS = {
     'variable.scrollbarTrack': 'Scrollbar Track',
     'variable.scrollbarThumb': 'Scrollbar Thumb',
     'variable.scrollbarThumbHover': 'Scrollbar Hover',
-    'variable.agentUser': 'User Message',
-    'variable.agentBot': 'Agent Message',
     'variable.scanline': 'Scanline Overlay',
     'variable.accentGlow': 'Accent Glow',
     'variable.accentBg': 'Accent Background',
@@ -3200,9 +2792,7 @@ const PRESETS = /* THEME_PRESETS_START */ {
       "--accent-bg": "rgba(88, 166, 255, 0.1)",
       "--modal-overlay": "rgba(0, 0, 0, 0.72)",
       "--on-surface": "#e6edf3",
-      "--on-surface-variant": "#9ba7b4",
-      "--agent-user-color": "#58a6ff",
-      "--agent-agent-color": "#79c0ff"
+      "--on-surface-variant": "#9ba7b4"
     }
   },
   "standard-light": {
@@ -3273,9 +2863,7 @@ const PRESETS = /* THEME_PRESETS_START */ {
       "--accent-bg": "rgba(9, 105, 218, 0.1)",
       "--modal-overlay": "rgba(31, 35, 40, 0.48)",
       "--on-surface": "#1f2328",
-      "--on-surface-variant": "#57606a",
-      "--agent-user-color": "#0969da",
-      "--agent-agent-color": "#8250df"
+      "--on-surface-variant": "#57606a"
     }
   },
   "cyberpunk": {
@@ -3342,9 +2930,7 @@ const PRESETS = /* THEME_PRESETS_START */ {
       "--accent-bg": "rgba(74, 246, 38, 0.1)",
       "--modal-overlay": "rgba(0, 0, 0, 0.8)",
       "--on-surface": "#e5e2e1",
-      "--on-surface-variant": "#bbccb0",
-      "--agent-user-color": "#4af626",
-      "--agent-agent-color": "#14d1ff"
+      "--on-surface-variant": "#bbccb0"
     }
   },
   "liquid-glass": {
@@ -3435,9 +3021,7 @@ const PRESETS = /* THEME_PRESETS_START */ {
       "--accent-bg": "rgba(0, 102, 218, 0.1)",
       "--modal-overlay": "rgba(20, 24, 33, 0.28)",
       "--on-surface": "#1d1d1f",
-      "--on-surface-variant": "#515154",
-      "--agent-user-color": "#0066da",
-      "--agent-agent-color": "#5856d6"
+      "--on-surface-variant": "#515154"
     }
   }
 } /* THEME_PRESETS_END */;
@@ -3449,7 +3033,6 @@ const VARIABLE_GROUPS = [
   { titleKey: 'group.borders', vars: ['--border', '--border-strong'] },
   { titleKey: 'group.error', vars: ['--error', '--error-bg'] },
   { titleKey: 'group.components', vars: ['--surface-dot', '--scrollbar-track', '--scrollbar-thumb', '--scrollbar-thumb-hover'] },
-  { titleKey: 'group.agent', vars: ['--agent-user-color', '--agent-agent-color'] },
   { titleKey: 'group.effects', vars: ['--scanline-tint', '--accent-glow', '--accent-bg', '--modal-overlay'] },
 ];
 
@@ -3473,8 +3056,6 @@ const VARIABLE_LABELS = {
   '--scrollbar-track': 'variable.scrollbarTrack',
   '--scrollbar-thumb': 'variable.scrollbarThumb',
   '--scrollbar-thumb-hover': 'variable.scrollbarThumbHover',
-  '--agent-user-color': 'variable.agentUser',
-  '--agent-agent-color': 'variable.agentBot',
   '--scanline-tint': 'variable.scanline',
   '--accent-glow': 'variable.accentGlow',
   '--accent-bg': 'variable.accentBg',

@@ -32,7 +32,7 @@ function createSession(stdout: string) {
     '7',
     '99'
   );
-  (session as any).executeAgentCommand = vi.fn(async () => ({
+  (session as any).executeRemoteCommand = vi.fn(async () => ({
     stdout,
     stderr: 'Ubuntu error text must not be parsed',
     exitCode: stdout ? 0 : 1,

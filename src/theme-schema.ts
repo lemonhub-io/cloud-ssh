@@ -46,8 +46,6 @@ export const SAFE_UI_THEME_PROPERTIES = [
   '--modal-overlay',
   '--on-surface',
   '--on-surface-variant',
-  '--agent-user-color',
-  '--agent-agent-color',
 ] as const;
 
 export const SAFE_TERMINAL_THEME_PROPERTIES = [

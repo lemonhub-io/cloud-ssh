@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import { enUS } from '../frontend/src/i18n/locales/en-US';
 import { zhCN } from '../frontend/src/i18n/locales/zh-CN';
 import { getAlternateLocale, normalizeLocale, resolveLocale, setLocale, t } from '../frontend/src/i18n';
-import { getResponseLanguageInstruction } from '../src/worker/agent/prompt';
 
 describe('国际化核心', () => {
   it('中英文语言包的键完全一致', () => {
@@ -113,14 +112,6 @@ describe('国际化核心', () => {
   });
 });
 
-describe('Agent 响应语言', () => {
-  it('根据界面语言生成明确且不改变命令内容的语言指令', () => {
-    expect(getResponseLanguageInstruction('en-US')).toContain('Respond in English');
-    expect(getResponseLanguageInstruction('zh-CN')).toContain('使用简体中文回答');
-    expect(getResponseLanguageInstruction('en-US')).toContain('commands');
-  });
-});
-
 describe('语言切换入口', () => {
   it('仅在连接页和服务器列表展示，终端会话中不允许切换', () => {
     const html = readFileSync(new URL('../frontend/index.html', import.meta.url), 'utf8');
@@ -140,7 +131,6 @@ describe('主题在线编辑器国际化', () => {
     readFileSync(new URL('../frontend/src/style.css', import.meta.url), 'utf8'),
     readFileSync(new URL('../frontend/src/server-list.ts', import.meta.url), 'utf8'),
     readFileSync(new URL('../frontend/src/tab-manager.ts', import.meta.url), 'utf8'),
-    readFileSync(new URL('../frontend/src/agent/agent-panel.ts', import.meta.url), 'utf8'),
   ].join('\n');
 
   it('与主项目共用语言偏好，并支持 URL、持久化设置和浏览器语言', () => {
@@ -166,21 +156,16 @@ describe('主题在线编辑器国际化', () => {
     expect(html).not.toMatch(/\b(?:window\.)?(?:alert|confirm|prompt)\s*\(/);
   });
 
-  it('同步服务器搜索、区域、网络质量、终端选区和 Agent 代码块 UI', () => {
+  it('同步服务器搜索、区域和网络质量 UI', () => {
     for (const marker of [
       'server.searchPlaceholder',
       'server.regionLabel',
       'network-quality-dot',
-      'ask-ai-selection',
-      'agent-md-code-block',
-      'agent-md-code-action',
     ]) {
       expect(currentProjectUi).toContain(marker);
       expect(html).toContain(marker);
     }
 
-    expect(html).toContain('data-i18n="terminal.askAISelection"');
-    expect(html).toContain('data-i18n="agent.codeFill"');
     expect(html).toContain('<option value="standard-dark">Standard Dark</option>');
     expect(html).toContain('<option value="standard-light">Standard Light</option>');
     expect(html).toContain("select.addEventListener('change', (event) => initTheme(event.target.value))");

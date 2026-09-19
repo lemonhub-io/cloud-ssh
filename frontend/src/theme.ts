@@ -246,8 +246,6 @@ export const UI_THEMES: Record<BuiltInThemeName, Record<string, string>> = {
     '--modal-overlay': 'rgba(0, 0, 0, 0.72)',
     '--on-surface': '#e6edf3',
     '--on-surface-variant': '#9ba7b4',
-    '--agent-user-color': '#58a6ff',
-    '--agent-agent-color': '#79c0ff',
   },
   'standard-light': {
     '--bg': '#f6f8fa',
@@ -275,8 +273,6 @@ export const UI_THEMES: Record<BuiltInThemeName, Record<string, string>> = {
     '--modal-overlay': 'rgba(31, 35, 40, 0.48)',
     '--on-surface': '#1f2328',
     '--on-surface-variant': '#57606a',
-    '--agent-user-color': '#0969da',
-    '--agent-agent-color': '#8250df',
   },
   cyberpunk: {
     '--bg': '#0a0a0a',
@@ -304,8 +300,6 @@ export const UI_THEMES: Record<BuiltInThemeName, Record<string, string>> = {
     '--modal-overlay': 'rgba(0, 0, 0, 0.8)',
     '--on-surface': '#e5e2e1',
     '--on-surface-variant': '#bbccb0',
-    '--agent-user-color': '#4af626',
-    '--agent-agent-color': '#14d1ff',
   },
   'liquid-glass': {
     '--bg': '#e6ecf4',
@@ -333,8 +327,6 @@ export const UI_THEMES: Record<BuiltInThemeName, Record<string, string>> = {
     '--modal-overlay': 'rgba(20, 24, 33, 0.28)',
     '--on-surface': '#1d1d1f',
     '--on-surface-variant': '#515154',
-    '--agent-user-color': '#0066da',
-    '--agent-agent-color': '#5856d6',
   },
 };
 

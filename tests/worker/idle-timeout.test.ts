@@ -192,22 +192,4 @@ describe('SSHSession 空闲超时机制', () => {
 
     session.close(true);
   });
-
-  it('AI Agent 运行态保护：Agent 工作期间自动维持连接不被超时断开', async () => {
-    const { session, ws } = createTestSession({ idleTimeoutMs: 60 });
-    (session as any).state = 'ready';
-
-    // Mock agentCore 处于 running 状态
-    (session as any).agentCore = {
-      getStatus: () => 'running',
-      agentAbort: vi.fn(),
-    };
-    (session as any).startIdleWatchdog();
-
-    // 等待 120ms（超过 60ms 超时）
-    await new Promise((resolve) => setTimeout(resolve, 120));
-
-    expect(ws.close).not.toHaveBeenCalled();
-    session.close(true);
-  });
 });

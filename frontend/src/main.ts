@@ -1,4 +1,3 @@
-import { AIConfigPanel } from './ai-config';
 import { ConnectionForm } from './auth-form';
 import { initI18n, onLocaleChange, t } from './i18n';
 import { MobileTerminalController } from './mobile-terminal';
@@ -85,7 +84,6 @@ function getTabManager(): TabManager {
     tabManager.setAllTabsClosedHandler(() => {
       showOfflineUI();
     });
-    tabManager.setLoggedIn(isLoggedIn);
     // 连接后检测到操作系统 → 即时更新服务器列表卡片图标
     tabManager.setOSDetectedHandler((serverId, os) => {
       serverList?.updateServerOS(serverId, os);
@@ -150,7 +148,6 @@ function activateTerminalView(): void {
 
 function showTerminalSection(): void {
   if (!tabManager || !tabManager.hasAnyTab()) return;
-  tabManager.getActiveTab()?.agentPanel?.rejectPendingConfirmation(false);
   activateTerminalView();
   tabManager.getActiveTab()?.terminal.fit();
 }
@@ -275,10 +272,6 @@ function showUserSpace(user: {
     userThemeSegmentedControl?.refresh();
   });
 
-  // Show agent toggle button for logged-in users
-  document.getElementById('agent-toggle-btn')?.classList.remove('hidden');
-  document.getElementById('mobile-agent-btn')?.classList.remove('hidden');
-
   serverList = new ServerList(
     user,
     // onLogout 回调
@@ -299,8 +292,6 @@ function showUserSpace(user: {
 
 /** 显示连接页面（匿名 → auth-form，登录 → 服务器列表） */
 function showConnectionPage(): void {
-  tabManager?.getActiveTab()?.agentPanel?.rejectPendingConfirmation(false);
-
   // 如果还有活跃标签，不需要隐藏终端区域；只需要覆盖显示连接页面
   // 但为了简单起见，我们先切回对应的入口页面
   if (isLoggedIn) {
@@ -391,8 +382,6 @@ function showSharedTerminal(claim: ClaimedShare): void {
   }
   sharedSessionMode = true;
   isLoggedIn = false;
-  document.getElementById('agent-toggle-btn')?.classList.add('hidden');
-  document.getElementById('mobile-agent-btn')?.classList.add('hidden');
   document.getElementById('snippet-toggle-btn')?.classList.add('hidden');
   document.getElementById('mobile-snippets-btn')?.classList.add('hidden');
   const tabBar = document.getElementById('tab-bar');
@@ -449,8 +438,6 @@ function syncDrawerSegmentedControl(): void {
     terminalDrawerControl?.setActive('snippet');
   } else if (tab?.sftpPanel?.isVisible()) {
     terminalDrawerControl?.setActive('sftp');
-  } else if (tab?.agentPanel?.isOpen) {
-    terminalDrawerControl?.setActive('agent');
   } else {
     terminalDrawerControl?.setActive(null);
   }
@@ -458,16 +445,15 @@ function syncDrawerSegmentedControl(): void {
 
 /**
  * 抽屉互斥开关的唯一入口（桌面分段条与移动端菜单按钮共用）。
- * 返回是否真的发生了状态变化（SFTP 未就绪 / Agent 不可用时为 false）。
+ * 返回是否真的发生了状态变化（SFTP 未就绪时为 false）。
  */
-function applyDrawerToggle(drawer: 'sftp' | 'snippet' | 'agent', open: boolean): boolean {
+function applyDrawerToggle(drawer: 'sftp' | 'snippet', open: boolean): boolean {
   const tab = tabManager?.getActiveTab();
   if (drawer === 'sftp') {
     if (open) {
       // SFTP 面板由 TabManager 的 sessionReady 回调初始化，未就绪时不可打开
       if (!tab?.sftpPanel) return false;
       snippetManager.close();
-      tab.agentPanel?.hide();
       tab.sftpPanel.show();
     } else {
       tab?.sftpPanel?.hide();
@@ -475,19 +461,9 @@ function applyDrawerToggle(drawer: 'sftp' | 'snippet' | 'agent', open: boolean):
   } else if (drawer === 'snippet') {
     if (open) {
       tab?.sftpPanel?.hide();
-      tab?.agentPanel?.hide();
       void snippetManager.open();
     } else {
       snippetManager.close();
-    }
-  } else {
-    if (open) {
-      if (!tab?.agentPanel) return false;
-      tab.sftpPanel?.hide();
-      snippetManager.close();
-      tab.agentPanel.show();
-    } else {
-      tab?.agentPanel?.hide();
     }
   }
   syncDrawerSegmentedControl();
@@ -499,7 +475,7 @@ function initTerminalDrawerControl(): void {
   if (!drawerBar) return;
 
   terminalDrawerControl = new LiquidSegmentedDrawerControl(drawerBar, (drawer, open) => {
-    if (!applyDrawerToggle(drawer as 'sftp' | 'snippet' | 'agent', open)) {
+    if (!applyDrawerToggle(drawer as 'sftp' | 'snippet', open)) {
       // 抽屉不可用：回退透镜的激活态
       terminalDrawerControl?.setActive(null);
     }
@@ -507,9 +483,9 @@ function initTerminalDrawerControl(): void {
 }
 
 /**
- * 移动端抽屉入口（#mobile-more-menu 内的 SFTP / AI Agent）。
- * 分段切换器在移动端整体隐藏（.desktop-terminal-action），因此这两个抽屉
- * 必须在移动端菜单里保留平行入口，否则移动端用户将无法使用 SFTP 与 AI 助手。
+ * 移动端抽屉入口（#mobile-more-menu 内的 SFTP）。
+ * 分段切换器在移动端整体隐藏（.desktop-terminal-action），因此这个抽屉
+ * 必须在移动端菜单里保留平行入口，否则移动端用户将无法使用 SFTP。
  */
 function initMobileDrawerButtons(): void {
   const closeMenu = () => mobileTerminalController.hideMoreMenu();
@@ -519,12 +495,6 @@ function initMobileDrawerButtons(): void {
     applyDrawerToggle('sftp', !(tab?.sftpPanel?.isVisible() ?? false));
     closeMenu();
   });
-
-  document.getElementById('mobile-agent-btn')?.addEventListener('click', () => {
-    const tab = tabManager?.getActiveTab();
-    applyDrawerToggle('agent', !(tab?.agentPanel?.isOpen ?? false));
-    closeMenu();
-  });
 }
 
 // 移动端命令片段按钮
@@ -532,30 +502,12 @@ function toggleSnippetManager(): void {
   const tab = tabManager?.getActiveTab();
   if (!snippetManager.isOpen()) {
     tab?.sftpPanel?.hide();
-    tab?.agentPanel?.hide();
   }
   snippetManager.toggle();
   syncDrawerSegmentedControl();
 }
 
 document.getElementById('mobile-snippets-btn')?.addEventListener('click', toggleSnippetManager);
-
-// ==================== AI Agent 面板设置 ====================
-
-const aiConfigPanel = new AIConfigPanel();
-
-document.getElementById('ai-config-btn')?.addEventListener('click', () => {
-  aiConfigPanel.show();
-});
-
-const askAISelectionButton = document.getElementById('ask-ai-selection-btn');
-askAISelectionButton?.addEventListener('pointerdown', (event) => {
-  // 阻止浮动入口的指针事件干扰终端拖拽状态。
-  event.stopPropagation();
-});
-askAISelectionButton?.addEventListener('click', () => {
-  tabManager?.askAIAboutActiveSelection();
-});
 
 // ==================== 终端搜索 ====================
 
@@ -850,7 +802,7 @@ async function init(): Promise<void> {
 
   document.addEventListener('click', (e) => {
     const target = e.target as HTMLElement | null;
-    if (target?.closest('#agent-close-btn, #sftp-close-btn, #snippet-close-btn')) {
+    if (target?.closest('#sftp-close-btn, #snippet-close-btn')) {
       setTimeout(() => syncDrawerSegmentedControl(), 50);
     }
   });

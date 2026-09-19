@@ -70,8 +70,6 @@ type ServerNameRow = { name: string };
 type ShareMetaRow = { user_id: number; server_id: number; share_ref: string; status: string };
 type ThemeRow = { theme_data: string };
 type FingerprintRow = { fingerprint: string };
-type AIConfigRow = { base_url: string; model: string; api_key_last4: string; updated_at: string };
-type AIConfigSecretRow = { base_url: string; model: string; api_key_enc: string };
 type WorkLogRow = ServerWorkLog;
 type KnowledgeRow = ServerKnowledgeItem;
 
@@ -175,15 +173,6 @@ export class UserDBDO {
 
       CREATE INDEX IF NOT EXISTS idx_known_hosts_user ON known_hosts(user_id);
 
-      CREATE TABLE IF NOT EXISTS ai_configs (
-        user_id        INTEGER PRIMARY KEY REFERENCES users(id),
-        base_url       TEXT NOT NULL,
-        model          TEXT NOT NULL,
-        api_key_enc    TEXT NOT NULL,
-        api_key_last4  TEXT,
-        updated_at     TEXT DEFAULT (datetime('now'))
-      );
-
       CREATE TABLE IF NOT EXISTS command_snippets (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id     INTEGER NOT NULL REFERENCES users(id),
@@ -239,6 +228,9 @@ export class UserDBDO {
       CREATE INDEX IF NOT EXISTS idx_server_knowledge_user_server
         ON server_knowledge(user_id, server_id, updated_at DESC);
     `);
+
+    // 清理已移除 AI 功能的遗留表（含加密存储的 API 密钥，幂等）
+    this.db.exec('DROP TABLE IF EXISTS ai_configs');
 
     // === Migration: 给既有 servers 表追加 region / inferred_hint 列（幂等） ===
     // SQLite 没有 ADD COLUMN IF NOT EXISTS，用 PRAGMA table_info 守卫
@@ -366,13 +358,6 @@ export class UserDBDO {
         return this.handleUpdateServerOS(parseInt(osMatch[1], 10), request);
       }
 
-      // /internal/servers/:id/memory/batch
-      const batchMemoryMatch = path.match(/^\/internal\/servers\/(\d+)\/memory\/batch$/);
-      if (batchMemoryMatch && request.method === 'POST') {
-        const serverId = parseInt(batchMemoryMatch[1], 10);
-        return this.handleBatchSaveMemory(serverId, request);
-      }
-
       // /internal/servers/:id/memory
       const memoryMatch = path.match(/^\/internal\/servers\/(\d+)\/memory$/);
       if (memoryMatch && request.method === 'GET') {
@@ -474,25 +459,6 @@ export class UserDBDO {
         const snippetId = parseInt(snippetMatch[1], 10);
         if (request.method === 'PUT') return this.handleUpdateSnippet(snippetId, request);
         if (request.method === 'DELETE') return this.handleDeleteSnippet(snippetId, request);
-      }
-
-      // --- AI 配置管理 ---
-      if (path === '/internal/ai-config' && request.method === 'GET') {
-        const userIdStr = url.searchParams.get('user_id');
-        if (!userIdStr) return Response.json({ error: 'Missing user_id' }, { status: 400 });
-        const userId = parseInt(userIdStr, 10);
-        if (isNaN(userId)) return Response.json({ error: 'Invalid user_id' }, { status: 400 });
-        return this.handleGetAIConfig(userId);
-      }
-      if (path === '/internal/ai-config' && request.method === 'PUT') {
-        return this.handlePutAIConfig(request);
-      }
-      if (path === '/internal/ai-config/decrypt' && request.method === 'GET') {
-        const userIdStr = url.searchParams.get('user_id');
-        if (!userIdStr) return Response.json({ error: 'Missing user_id' }, { status: 400 });
-        const userId = parseInt(userIdStr, 10);
-        if (isNaN(userId)) return Response.json({ error: 'Invalid user_id' }, { status: 400 });
-        return this.handleGetAIConfigDecrypted(userId);
       }
 
       return Response.json({ error: 'Not Found' }, { status: 404 });
@@ -1327,7 +1293,6 @@ export class UserDBDO {
       source: 'share',
       shareId: body.share_id,
       shareRef: body.share_ref,
-      allowAgent: false,
       allowSftp: true,
       allowMetadataMutation: false,
       allowHostKeyMutation: false,
@@ -1753,115 +1718,6 @@ export class UserDBDO {
     return Response.json({ success: true });
   }
 
-  // ==================== AI 配置管理 ====================
-
-  private handleGetAIConfig(userId: number): Response {
-    const rows = this.query<AIConfigRow>(
-      'SELECT base_url, model, api_key_last4, updated_at FROM ai_configs WHERE user_id = ?',
-      userId
-    );
-
-    if (rows.length === 0) {
-      return Response.json({ configured: false });
-    }
-
-    const row = rows[0];
-    return Response.json({
-      configured: true,
-      base_url: row.base_url,
-      model: row.model,
-      api_key_last4: row.api_key_last4,
-      updated_at: row.updated_at,
-    });
-  }
-
-  private async handlePutAIConfig(request: Request): Promise<Response> {
-    const body = await request.json<{
-      user_id: number;
-      base_url: string;
-      model: string;
-      api_key?: string;
-    }>();
-
-    if (!body.user_id || !body.base_url || !body.model) {
-      return Response.json({ error: 'Missing user_id, base_url or model' }, { status: 400 });
-    }
-
-    // Check if an existing configuration exists with a valid API key
-    const existing = this.db
-      .exec('SELECT api_key_enc FROM ai_configs WHERE user_id = ?', body.user_id)
-      .toArray();
-    const hasExistingKey = existing.length > 0 && !!(existing[0] as any).api_key_enc;
-
-    if (!body.api_key && !hasExistingKey) {
-      return Response.json({ error: '首次配置必须填写 API Key' }, { status: 400 });
-    }
-
-    let encrypted: string | null = null;
-    let last4: string | null = null;
-
-    if (body.api_key) {
-      encrypted = await this.encryptCredential(body.api_key, body.user_id);
-      last4 = body.api_key.slice(-4);
-    }
-
-    if (encrypted === null) {
-      this.db.exec(
-        `INSERT INTO ai_configs (user_id, base_url, model, api_key_enc, api_key_last4, updated_at)
-         VALUES (?, ?, ?, '', '', datetime('now'))
-         ON CONFLICT(user_id) DO UPDATE SET
-           base_url = excluded.base_url,
-           model = excluded.model,
-           updated_at = excluded.updated_at`,
-        body.user_id,
-        body.base_url,
-        body.model
-      );
-    } else {
-      this.db.exec(
-        `INSERT INTO ai_configs (user_id, base_url, model, api_key_enc, api_key_last4, updated_at)
-         VALUES (?, ?, ?, ?, ?, datetime('now'))
-         ON CONFLICT(user_id) DO UPDATE SET
-           base_url = excluded.base_url,
-           model = excluded.model,
-           api_key_enc = excluded.api_key_enc,
-           api_key_last4 = excluded.api_key_last4,
-           updated_at = excluded.updated_at`,
-        body.user_id,
-        body.base_url,
-        body.model,
-        encrypted,
-        last4
-      );
-    }
-
-    return Response.json({ success: true });
-  }
-
-  private async handleGetAIConfigDecrypted(userId: number): Promise<Response> {
-    const rows = this.query<AIConfigSecretRow>(
-      'SELECT base_url, model, api_key_enc FROM ai_configs WHERE user_id = ?',
-      userId
-    );
-
-    if (rows.length === 0) {
-      return Response.json({ error: 'No AI config found' }, { status: 404 });
-    }
-    const row = rows[0];
-
-    if (!row.api_key_enc) {
-      return Response.json({ error: 'No API key configured' }, { status: 404 });
-    }
-
-    const decrypted = await this.decryptCredential(row.api_key_enc, userId);
-
-    return Response.json({
-      base_url: row.base_url,
-      model: row.model,
-      api_key: decrypted,
-    });
-  }
-
   // ==================== 服务器统一记忆 (Work Logs & Knowledge) ====================
 
   private handleGetServerMemory(serverId: number, userId: number): Response {
@@ -2088,148 +1944,5 @@ export class UserDBDO {
     }
 
     return Response.json({ success: true, count: ids.length });
-  }
-
-  private async handleBatchSaveMemory(serverId: number, request: Request): Promise<Response> {
-    const body = await request.json<{
-      user_id: number;
-      workLog?: { mode?: unknown; title?: unknown; summary?: unknown };
-      workLogs?: Array<{ mode?: unknown; title?: unknown; summary?: unknown }>;
-      knowledge?: Array<{ action?: unknown; category?: unknown; key?: unknown; value?: unknown }>;
-    }>();
-
-    if (!body.user_id) return Response.json({ error: 'Missing user_id' }, { status: 400 });
-
-    const existing = this.query<UserIdRow>('SELECT user_id FROM servers WHERE id = ?', serverId);
-    if (existing.length === 0) return Response.json({ error: 'Server not found' }, { status: 404 });
-    if (existing[0].user_id !== body.user_id) return Response.json({ error: 'Forbidden' }, { status: 403 });
-
-    const now = Date.now();
-
-    // 1. 保存工作日志（支持单个对象或数组）
-    const rawLogs = Array.isArray(body.workLogs)
-      ? body.workLogs
-      : body.workLog
-        ? [body.workLog]
-        : [];
-
-    if (rawLogs.length > 0) {
-      for (const log of rawLogs) {
-        const norm = normalizeWorkLogInput(
-          { mode: log.mode, title: log.title, summary: log.summary },
-          { truncate: true }
-        );
-        if (!norm.ok) continue;
-
-        if (norm.value.mode === 'update_latest') {
-          const latestRows = this.db
-            .exec(
-              `SELECT id FROM server_work_logs
-               WHERE server_id = ? AND user_id = ?
-               ORDER BY updated_at DESC LIMIT 1`,
-              serverId,
-              body.user_id
-            )
-            .toArray();
-
-          if (latestRows.length > 0) {
-            this.db.exec(
-              `UPDATE server_work_logs
-               SET title = ?, summary = ?, updated_at = ?
-               WHERE id = ?`,
-              norm.value.title,
-              norm.value.summary,
-              now,
-              latestRows[0].id
-            );
-            continue;
-          }
-        }
-
-        this.db.exec(
-          `INSERT INTO server_work_logs (user_id, server_id, title, summary, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          body.user_id,
-          serverId,
-          norm.value.title,
-          norm.value.summary,
-          now,
-          now
-        );
-      }
-
-      this.db.exec(
-        `DELETE FROM server_work_logs
-         WHERE server_id = ? AND user_id = ? AND id NOT IN (
-           SELECT id FROM server_work_logs
-           WHERE server_id = ? AND user_id = ?
-           ORDER BY updated_at DESC LIMIT ?
-         )`,
-        serverId,
-        body.user_id,
-        serverId,
-        body.user_id,
-        MAX_SERVER_WORK_LOGS
-      );
-    }
-
-    // 2. 保存上下文知识或凭据
-    if (Array.isArray(body.knowledge)) {
-      for (const k of body.knowledge) {
-        const norm = normalizeKnowledgeInput(
-          {
-            action: k.action,
-            category: k.category,
-            key: k.key,
-            value: k.value,
-          },
-          { truncate: true }
-        );
-        if (!norm.ok) continue;
-
-        if (norm.value.action === 'delete') {
-          this.db.exec(
-            `DELETE FROM server_knowledge
-             WHERE user_id = ? AND server_id = ? AND key = ?`,
-            body.user_id,
-            serverId,
-            norm.value.key
-          );
-          continue;
-        }
-
-        this.db.exec(
-          `INSERT INTO server_knowledge (user_id, server_id, category, key, value, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(user_id, server_id, key) DO UPDATE SET
-             category = excluded.category,
-             value = excluded.value,
-             updated_at = excluded.updated_at`,
-          body.user_id,
-          serverId,
-          norm.value.category,
-          norm.value.key,
-          norm.value.value,
-          now,
-          now
-        );
-      }
-
-      this.db.exec(
-        `DELETE FROM server_knowledge
-         WHERE server_id = ? AND user_id = ? AND id NOT IN (
-           SELECT id FROM server_knowledge
-           WHERE server_id = ? AND user_id = ?
-           ORDER BY updated_at DESC LIMIT ?
-         )`,
-        serverId,
-        body.user_id,
-        serverId,
-        body.user_id,
-        MAX_SERVER_KNOWLEDGE
-      );
-    }
-
-    return Response.json({ success: true });
   }
 }

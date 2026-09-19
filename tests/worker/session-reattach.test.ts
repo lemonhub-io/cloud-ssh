@@ -190,7 +190,6 @@ describe('SSHSession Re-attach & Backpressure Flow Control', () => {
           source: 'share',
           shareId: 'share-123',
           shareRef: 'ref-456',
-          allowAgent: false,
           allowSftp: true,
           allowMetadataMutation: false,
           allowHostKeyMutation: false,

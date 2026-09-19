@@ -60,7 +60,7 @@
   /* 滚动条尺寸（不随主题变化） */
   --scrollbar-size: 8px;
   --terminal-frame-gap: 6px;
-  /* 侧边抽屉（SFTP / 自定义命令 / AI Agent）顶部让位高度。
+  /* 侧边抽屉（SFTP / 自定义命令）顶部让位高度。
      桌面端顶栏为 h-16 = 4rem，抽屉必须从其下方展开，
      否则全高浮层会盖住顶栏的分段切换器，导致抽屉之间无法直接切换。
      移动端在响应式区块中复位为 0。 */
@@ -654,179 +654,6 @@ select optgroup {
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
-}
-
-/* Hide scrollbar for Agent input textarea */
-#agent-input {
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none; /* IE/Edge */
-}
-
-#agent-input::-webkit-scrollbar {
-  display: none; /* WebKit (Chrome/Safari) */
-}
-
-/* Agent 待发送终端选区 */
-.agent-context-container {
-  margin-bottom: 10px;
-}
-
-.agent-context-chip {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 7px 8px 7px 10px;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-surface));
-}
-
-.agent-context-details {
-  min-width: 0;
-  flex: 1;
-}
-
-.agent-context-summary {
-  display: flex;
-  min-height: 22px;
-  align-items: center;
-  gap: 6px;
-  color: var(--on-surface);
-  cursor: pointer;
-  list-style: none;
-}
-
-.agent-context-summary::-webkit-details-marker {
-  display: none;
-}
-
-.agent-context-summary:focus-visible,
-.agent-context-remove:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-
-.agent-context-icon {
-  flex-shrink: 0;
-  color: var(--accent);
-  font-size: 16px;
-}
-
-.agent-context-title {
-  flex-shrink: 0;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.agent-context-meta {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--on-surface-variant);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-context-expand {
-  margin-left: auto;
-  color: var(--on-surface-variant);
-  font-size: 17px;
-  transition: transform 0.2s ease;
-}
-
-.agent-context-details[open] .agent-context-expand {
-  transform: rotate(180deg);
-}
-
-.agent-context-source {
-  margin: 7px 0 5px 22px;
-  overflow: hidden;
-  color: var(--on-surface-variant);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-context-preview {
-  max-height: 140px;
-  margin: 0 0 2px 22px;
-  overflow: auto;
-  color: var(--on-surface);
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 11px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.agent-context-remove {
-  display: flex;
-  width: 24px;
-  height: 24px;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--on-surface-variant);
-  cursor: pointer;
-}
-
-.agent-context-remove:hover {
-  background: color-mix(in srgb, var(--error) 12%, transparent);
-  color: var(--error);
-}
-
-.agent-context-remove .material-symbols-outlined {
-  font-size: 16px;
-}
-
-.agent-message-context {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 6px;
-  color: var(--on-surface-variant);
-  font-size: 10px;
-}
-
-.agent-message-context .material-symbols-outlined {
-  font-size: 13px;
-}
-
-/* Agent markdown table */
-.agent-table {
-  border-spacing: 0;
-}
-
-.agent-table th,
-.agent-table td {
-  word-break: break-word;
-}
-
-.agent-table tbody tr:hover {
-  background: color-mix(in srgb, var(--agent-agent-color) 8%, transparent);
-}
-
-/* Agent Work Log Summary clamp and expansion */
-.agent-log-summary {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  word-break: break-word;
-  transition: color 0.15s ease;
-}
-
-.agent-log-summary.expanded {
-  display: block;
-  -webkit-line-clamp: unset;
-  line-clamp: unset;
-  overflow: visible;
 }
 
 /* ==================== User Space Styles ==================== */
@@ -1687,20 +1514,6 @@ select optgroup {
   box-shadow: 0 0 5px rgba(239, 68, 68, 0.65);
 }
 
-.ask-ai-selection-float {
-  position: fixed;
-  z-index: 80;
-  display: inline-flex;
-  white-space: nowrap;
-  background: var(--bg-elevated);
-  border-radius: var(--control-radius);
-  box-shadow: var(--shadow-floating);
-}
-
-.ask-ai-selection-float.hidden {
-  display: none;
-}
-
 .tab-dot {
   width: 6px;
   height: 6px;
@@ -2522,7 +2335,7 @@ html[data-ui-style="liquid"] :is(.app-dialog__panel, .remote-editor__panel, .aut
   box-shadow: var(--shadow-modal);
 }
 
-html[data-ui-style="liquid"] :is(#agent-panel, #sftp-panel, #snippet-panel) {
+html[data-ui-style="liquid"] :is(#sftp-panel, #snippet-panel) {
   background: color-mix(in srgb, var(--bg-surface) 15%, rgba(255, 255, 255, 0.78));
   -webkit-backdrop-filter: blur(32px) saturate(200%) contrast(115%) brightness(106%);
   backdrop-filter: blur(32px) saturate(200%) contrast(115%) brightness(106%);
@@ -2532,15 +2345,15 @@ html[data-ui-style="liquid"] :is(#agent-panel, #sftp-panel, #snippet-panel) {
     inset 1px 0 0 0 rgba(255, 255, 255, 1);
 }
 
-/* 三大抽屉面板统一高光微透明 Header */
-html[data-ui-style="liquid"] :is(#agent-panel, #sftp-panel, #snippet-panel) :is(.agent-panel-header, .sftp-panel-header) {
+/* 抽屉面板统一高光微透明 Header */
+html[data-ui-style="liquid"] :is(#sftp-panel, #snippet-panel) .sftp-panel-header {
   background: color-mix(in srgb, var(--bg-surface) 25%, rgba(255, 255, 255, 0.5));
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 
-/* AI Agent 与 SFTP 的内层包裹使用了不透明底色（var(--bg) / bg-surface），
-   会盖住面板本身的毛玻璃；置为透明后三者玻璃质感才真正一致。 */
-html[data-ui-style="liquid"] :is(#agent-panel, #sftp-panel) > div:first-child {
+/* SFTP 的内层包裹使用了不透明底色（var(--bg) / bg-surface），
+   会盖住面板本身的毛玻璃；置为透明后玻璃质感才真正一致。 */
+html[data-ui-style="liquid"] #sftp-panel > div:first-child {
   background: transparent;
   border-left: 0;
 }
@@ -2782,13 +2595,13 @@ html[data-ui-motion="none"] :is(.flicker, .scanlines, .scanline) {
   }
 }
 
-/* ========== Agent Panel ========== */
+/* ========== Side Drawer Panels ========== */
 
-/* 三大侧边抽屉（SFTP / 自定义命令 / AI Agent）共用同一几何尺寸。
-   此前宽度由各模块内联 style 各自声明（SFTP/Agent 为 420–600px，
+/* 侧边抽屉（SFTP / 自定义命令）共用同一几何尺寸。
+   此前宽度由各模块内联 style 各自声明（SFTP 为 420–600px，
    自定义命令为 440–680px），导致同一屏幕下抽屉宽度明显不一致；
    现集中收敛到此处唯一来源，内联宽度已移除。 */
-:is(#agent-panel, #sftp-panel, #snippet-panel) {
+:is(#sftp-panel, #snippet-panel) {
   width: min(clamp(420px, 40vw, 600px), 100vw);
   max-width: 100vw;
   min-width: 0;
@@ -2801,7 +2614,6 @@ html[data-ui-motion="none"] :is(.flicker, .scanlines, .scanline) {
   top: var(--drawer-top);
 }
 
-.agent-header-btn,
 .panel-close-btn {
   display: inline-flex;
   align-items: center;
@@ -2819,13 +2631,11 @@ html[data-ui-motion="none"] :is(.flicker, .scanlines, .scanline) {
   box-sizing: border-box;
 }
 
-.agent-header-btn:hover,
 .panel-close-btn:hover {
   color: var(--primary);
   background: var(--bg-hover);
 }
 
-.agent-header-btn .material-symbols-outlined:not(.agent-mobile-back),
 .panel-close-btn .material-symbols-outlined {
   font-size: 18px;
   width: 18px;
@@ -2835,723 +2645,6 @@ html[data-ui-motion="none"] :is(.flicker, .scanlines, .scanline) {
   display: block;
 }
 
-.agent-mobile-back,
-.agent-header-btn .agent-mobile-back {
-  display: none;
-}
-
-.agent-desktop-close,
-.agent-header-btn .agent-desktop-close {
-  display: block;
-}
-
-/* ========== Agent Markdown Content (themed) ==========
-   Style the DOM output from marked.js. All colors come from CSS variables so
-   theme switching only touches :root variables — the markup is untouched. */
-
-.agent-md-content {
-  word-break: break-word;
-  line-height: 1.6;
-  color: var(--agent-agent-color);
-  font-size: 13px;
-}
-
-/* Agent message role icon wrapper - aligns icon with the first line of text */
-.agent-role-icon-wrapper {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 21px;
-  flex-shrink: 0;
-  line-height: 1;
-}
-
-/* Headings */
-.agent-md-content h1,
-.agent-md-content h2,
-.agent-md-content h3,
-.agent-md-content h4,
-.agent-md-content h5,
-.agent-md-content h6 {
-  color: var(--agent-agent-color);
-  font-weight: 700;
-  line-height: 1.3;
-  margin: 12px 0 6px;
-}
-.agent-md-content > :first-child {
-  margin-top: 0;
-}
-.agent-md-content > :last-child {
-  margin-bottom: 0;
-}
-.agent-md-content h1 {
-  font-size: 18px;
-}
-.agent-md-content h2 {
-  font-size: 16px;
-}
-.agent-md-content h3 {
-  font-size: 14.5px;
-}
-.agent-md-content h4 {
-  font-size: 13.5px;
-}
-.agent-md-content h5 {
-  font-size: 12.5px;
-}
-.agent-md-content h6 {
-  font-size: 12px;
-  opacity: 0.85;
-}
-
-/* Paragraphs */
-.agent-md-content p {
-  margin: 4px 0;
-}
-
-/* Links */
-.agent-md-content a.agent-md-link,
-.agent-md-content a {
-  color: var(--agent-agent-color);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  opacity: 0.9;
-}
-.agent-md-content a:hover {
-  opacity: 1;
-}
-
-/* Code: fenced blocks */
-.agent-md-content .agent-md-code-block {
-  margin: 4px 0 8px;
-  border: 1px solid color-mix(in srgb, var(--agent-agent-color) 15%, transparent);
-  border-radius: 6px;
-  overflow: hidden;
-  background: color-mix(in srgb, var(--agent-agent-color) 8%, transparent);
-}
-.agent-md-content .agent-md-code-toolbar {
-  min-height: 30px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 5px 3px 8px;
-  border-bottom: 1px solid color-mix(in srgb, var(--agent-agent-color) 12%, transparent);
-}
-.agent-md-content .agent-md-lang {
-  font-size: 10px;
-  opacity: 0.65;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  flex-shrink: 0;
-}
-.agent-md-content .agent-md-code-meta {
-  min-width: 0;
-  flex: 1;
-  color: var(--on-surface-variant);
-  font-size: 10px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: right;
-}
-.agent-md-content .agent-md-code-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-.agent-md-content .agent-md-code-action {
-  min-height: 24px;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 6px;
-  border: 1px solid color-mix(in srgb, var(--agent-agent-color) 22%, transparent);
-  border-radius: 4px;
-  color: var(--agent-agent-color);
-  background: color-mix(in srgb, var(--agent-agent-color) 6%, transparent);
-  font-size: 10px;
-  line-height: 1;
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    border-color 0.15s;
-}
-.agent-md-content .agent-md-code-action .material-symbols-outlined {
-  font-size: 13px;
-}
-.agent-md-content .agent-md-code-action:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--agent-agent-color) 45%, transparent);
-  background: color-mix(in srgb, var(--agent-agent-color) 14%, transparent);
-}
-.agent-md-content .agent-md-code-action:focus-visible {
-  outline: 2px solid var(--agent-agent-color);
-  outline-offset: 1px;
-}
-.agent-md-content .agent-md-code-action:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
-}
-.agent-md-content .agent-md-pre {
-  background: transparent;
-  color: var(--agent-agent-color);
-  padding: 8px 10px;
-  border-radius: 0;
-  font-size: 11.5px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  margin: 0;
-  border: none;
-}
-.agent-md-content .agent-md-pre code {
-  background: transparent;
-  padding: 0;
-  border: none;
-  color: inherit;
-  font-size: inherit;
-}
-
-/* Code: inline */
-.agent-md-content .agent-md-inline-code {
-  background: color-mix(in srgb, var(--agent-agent-color) 15%, transparent);
-  color: var(--agent-agent-color);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11.5px;
-  padding: 1px 5px;
-  border-radius: 3px;
-}
-
-/* Lists */
-.agent-md-content ul {
-  list-style-type: disc;
-  padding-left: 22px;
-  margin: 4px 0;
-}
-.agent-md-content ol {
-  list-style-type: decimal;
-  padding-left: 22px;
-  margin: 4px 0;
-}
-.agent-md-content li {
-  margin: 2px 0;
-}
-.agent-md-content li > p {
-  margin: 1px 0;
-}
-.agent-md-content li > ul,
-.agent-md-content li > ol {
-  margin: 2px 0;
-}
-
-/* Task list (GFM): - [ ] / - [x] */
-.agent-md-content ul:has(> li > input[type="checkbox"]) {
-  list-style: none;
-  padding-left: 6px;
-}
-.agent-md-content li > input[type="checkbox"] {
-  margin-right: 6px;
-  accent-color: var(--agent-agent-color);
-}
-
-/* Blockquotes */
-.agent-md-content blockquote {
-  border-left: 3px solid var(--agent-agent-color);
-  margin: 8px 0;
-  padding: 2px 10px;
-  color: color-mix(in srgb, var(--agent-agent-color) 80%, var(--on-surface-variant));
-  font-style: italic;
-  background: color-mix(in srgb, var(--agent-agent-color) 5%, transparent);
-  border-radius: 0 4px 4px 0;
-}
-.agent-md-content blockquote p {
-  margin: 2px 0;
-}
-
-/* Horizontal rule */
-.agent-md-content hr {
-  border: none;
-  border-top: 1px solid color-mix(in srgb, var(--agent-agent-color) 25%, transparent);
-  margin: 10px 0;
-}
-
-/* Tables (GFM) */
-.agent-md-content table {
-  border-collapse: collapse;
-  width: 100%;
-  font-size: 12px;
-  margin: 6px 0;
-  border-top: 2px solid var(--agent-agent-color);
-  display: block;
-  overflow-x: auto;
-}
-.agent-md-content thead {
-  display: table-header-group;
-}
-.agent-md-content tbody {
-  display: table-row-group;
-}
-.agent-md-content th,
-.agent-md-content td {
-  padding: 5px 10px;
-  border-bottom: 1px solid color-mix(in srgb, var(--agent-agent-color) 20%, transparent);
-  vertical-align: top;
-}
-.agent-md-content th {
-  font-weight: 700;
-  color: var(--agent-agent-color);
-  background: color-mix(in srgb, var(--agent-agent-color) 10%, transparent);
-  text-align: left;
-  white-space: nowrap;
-}
-.agent-md-content tbody tr:hover td {
-  background: color-mix(in srgb, var(--agent-agent-color) 6%, transparent);
-}
-
-/* Strikethrough (GFM) */
-.agent-md-content del {
-  opacity: 0.6;
-}
-
-/* Images */
-.agent-md-content .agent-md-img,
-.agent-md-content img {
-  max-width: 100%;
-  height: auto;
-  border-radius: 4px;
-  margin: 4px 0;
-}
-
-/* Strong / Em */
-.agent-md-content strong {
-  color: var(--agent-agent-color);
-  font-weight: 700;
-}
-.agent-md-content em {
-  font-style: italic;
-}
-
-/* Auto-resizing textarea for agent input */
-#agent-input {
-  font-family: inherit;
-}
-
-#agent-input::placeholder {
-  color: var(--on-surface-variant);
-  opacity: 0.7;
-}
-
-/* Agent send button */
-.agent-send-btn {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  border: none;
-  background: var(--accent);
-  color: var(--on-accent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition:
-    background-color 0.2s ease,
-    box-shadow 0.2s ease,
-    color 0.2s ease,
-    transform 0.2s ease;
-  flex-shrink: 0;
-}
-
-.agent-send-btn:hover {
-  background: color-mix(in srgb, var(--accent) 85%, white);
-  transform: scale(1.08);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 40%, transparent);
-}
-
-.agent-send-btn:active {
-  transform: scale(0.95);
-}
-
-.agent-send-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
-}
-
-/* Agent stop button modifier */
-.agent-send-btn.is-stopping {
-  background: var(--error);
-  color: #fff;
-}
-
-.agent-send-btn.is-stopping:hover {
-  background: color-mix(in srgb, var(--error) 85%, white);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--error) 40%, transparent);
-}
-
-/* Agent user message actions bar - floating toolbar outside bubble */
-.agent-user-actions {
-  position: absolute;
-  right: 100%;
-  bottom: 4px;
-  margin-right: 6px;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px 3px;
-  border-radius: 6px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
-  opacity: 0;
-  transform: translateX(4px);
-  transition:
-    opacity 0.15s ease,
-    transform 0.15s ease;
-  pointer-events: none;
-  z-index: 5;
-  white-space: nowrap;
-}
-
-.agent-user-container:hover .agent-user-actions,
-.agent-user-container:focus-within .agent-user-actions,
-.agent-user-bubble:hover .agent-user-actions,
-.agent-user-bubble:focus-within .agent-user-actions {
-  opacity: 1;
-  transform: translateX(0);
-  pointer-events: auto;
-}
-
-/* Touch devices (coarse pointer) keep actions accessible */
-@media (pointer: coarse) {
-  .agent-user-actions {
-    opacity: 0.75;
-    transform: translateX(0);
-    pointer-events: auto;
-  }
-}
-
-.agent-user-action-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 4px;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition: color 0.15s ease, background-color 0.15s ease;
-}
-
-.agent-user-action-btn:hover {
-  color: var(--on-surface);
-  background: color-mix(in srgb, var(--on-surface) 12%, transparent);
-}
-
-.agent-aborted-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--error) 12%, transparent);
-  color: var(--error);
-  border: 1px solid color-mix(in srgb, var(--error) 25%, transparent);
-}
-
-/* Agent inline edit card (ChatGPT style) */
-.agent-inline-edit-card {
-  width: 100%;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.agent-inline-edit-card:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent), 0 2px 8px rgba(0, 0, 0, 0.12);
-}
-
-.agent-inline-edit-textarea {
-  width: 100%;
-  background: transparent;
-  border: none;
-  outline: none;
-  resize: none;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--on-surface);
-  font-family: inherit;
-  min-height: 44px;
-  max-height: 240px;
-}
-
-.agent-inline-cancel-btn {
-  padding: 4px 12px;
-  font-size: 12px;
-  border-radius: 9999px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition: color 0.15s, background-color 0.15s;
-}
-
-.agent-inline-cancel-btn:hover {
-  color: var(--on-surface);
-  background: var(--bg-hover);
-}
-
-.agent-inline-send-btn {
-  padding: 4px 14px;
-  font-size: 12px;
-  font-weight: 500;
-  border-radius: 9999px;
-  border: none;
-  background: var(--accent);
-  color: var(--on-accent);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  transition: opacity 0.15s, transform 0.1s;
-}
-
-.agent-inline-send-btn:hover:not(:disabled) {
-  opacity: 0.9;
-}
-
-.agent-inline-send-btn:active:not(:disabled) {
-  transform: scale(0.97);
-}
-
-.agent-inline-send-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* Streaming cursor — blinking block appended to streamed text */
-@keyframes agent-blink {
-  0%,
-  49% {
-    opacity: 1;
-  }
-  50%,
-  100% {
-    opacity: 0;
-  }
-}
-
-.streaming-cursor {
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  background: var(--agent-agent-color);
-  margin-left: 3px;
-  vertical-align: text-bottom;
-  animation: agent-blink 1s step-end infinite;
-}
-
-/* ─── Thinking Process Container ─────────────────────────────────────────── */
-.agent-thinking-process {
-  border: 1px solid color-mix(in srgb, var(--agent-agent-color) 20%, transparent);
-  border-radius: 8px;
-  overflow: hidden;
-  font-size: 12px;
-}
-
-.tp-accordion {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  background: color-mix(in srgb, var(--agent-agent-color) 6%, transparent);
-  border: none;
-  outline: none;
-  width: 100%;
-  cursor: pointer;
-  user-select: none;
-  font: inherit;
-  color: inherit;
-}
-
-.tp-chevron {
-  font-size: 16px;
-  color: var(--on-surface-variant);
-  transition: transform 0.2s ease;
-}
-
-.agent-thinking-process.tp-expanded .tp-chevron {
-  transform: rotate(180deg);
-}
-
-.tp-icon {
-  font-size: 16px;
-  color: var(--agent-agent-color);
-}
-
-.tp-status {
-  flex: 1;
-  font-size: 11px;
-  color: var(--on-surface-variant);
-  font-weight: 600;
-}
-
-/* Thinking dots animation */
-.thinking-dots {
-  display: flex;
-  gap: 2px;
-}
-
-/* Body (collapsible) — hidden by default when done */
-.tp-body {
-  max-height: 0;
-  overflow: hidden;
-  transition: max-height 0.3s ease-out;
-}
-
-.agent-thinking-process.tp-expanded .tp-body {
-  max-height: min(400px, 50vh);
-}
-
-/* Steps list */
-.tp-steps {
-  padding: 4px 0;
-}
-
-/* Individual step row */
-.tp-step {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 12px;
-  transition: opacity 0.2s ease;
-}
-
-/* Override Google Fonts default font-size: 24px with higher-specificity selectors */
-.tp-step .material-symbols-outlined {
-  font-size: 14px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.tp-live-item .material-symbols-outlined {
-  font-size: 13px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.tp-step-icon {
-  color: var(--on-surface-variant);
-}
-
-.tp-step-label {
-  flex: 1;
-  color: var(--on-surface);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-}
-
-/* Current step highlight */
-.tp-step-active {
-  background: color-mix(in srgb, var(--agent-agent-color) 8%, transparent);
-  animation: tp-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes tp-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.6;
-  }
-}
-
-/* Completed step */
-.tp-step-done .tp-step-icon {
-  color: var(--agent-agent-color);
-}
-
-/* Expand affordance: hide chevron + disable pointer while thinking is in progress */
-.agent-thinking-process:not(.tp-done) .tp-chevron {
-  display: none;
-}
-
-.agent-thinking-process:not(.tp-done) .tp-accordion {
-  cursor: default;
-}
-
-.tp-accordion:hover {
-  background: color-mix(in srgb, var(--agent-agent-color) 10%, transparent);
-}
-
-.agent-thinking-process:not(.tp-done) .tp-accordion:hover {
-  background: color-mix(in srgb, var(--agent-agent-color) 6%, transparent);
-}
-
-/* Current step container (below history) */
-.tp-current {
-  padding: 4px 0 8px;
-  border-top: 1px solid color-mix(in srgb, var(--agent-agent-color) 10%, transparent);
-  margin-top: 4px;
-}
-
-.tp-current:empty {
-  display: none;
-  border: none;
-  margin: 0;
-  padding: 0;
-}
-
-/* ─── Live Preview (latest 1-2 executing commands, shown in header area) ── */
-.tp-live-preview {
-  padding: 0 12px 0 16px;
-  background: color-mix(in srgb, var(--agent-agent-color) 3%, transparent);
-  border-top: 1px solid color-mix(in srgb, var(--agent-agent-color) 10%, transparent);
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 11px;
-}
-
-.tp-live-preview:empty {
-  display: none;
-  border: none;
-  padding: 0;
-}
-
-.tp-live-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 0;
-  color: var(--on-surface);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.tp-live-item > span:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-}
-
-.tp-live-icon {
-  font-size: 13px;
-  color: var(--agent-agent-color);
-  flex-shrink: 0;
-  animation: tp-pulse 1.5s ease-in-out infinite;
-}
 
 /* ==================== SFTP 操作栏（全局：桌面面板 420~600px、移动/平板全屏） ====================
    按钮禁止压缩换行：WebKit 对嵌套 flex 的内在尺寸计算会把 CJK 标签
@@ -3866,8 +2959,7 @@ html[data-ui-motion="none"] :is(.flicker, .scanlines, .scanline) {
   /* .hidden 必须能盖住上面 .mobile-more-menu > button 的 display: flex：
      该规则特异性为 (0,1,1)，而 Tailwind 的 .hidden 仅为 (0,1,0)，
      因此过去在菜单按钮上加 hidden 完全无效 —— 曾导致一次性分享会话仍显示
-     「自定义命令」入口（违反 AGENTS.md #24），以及移动端 AI Agent 入口在
-     匿名模式下泄露。 */
+     「自定义命令」入口（违反 AGENTS.md #24）。 */
   .mobile-more-menu > button.hidden {
     display: none;
   }
@@ -3969,13 +3061,6 @@ html[data-ui-motion="none"] :is(.flicker, .scanlines, .scanline) {
     padding-bottom: 0;
   }
 
-  /* 移动端打开 AI Agent 时隐藏终端快捷键工具栏，防止遮挡 Agent 底部输入框与操作区 */
-  body.agent-panel-open .mobile-terminal-toolbar,
-  body:has(#agent-panel:not([style*="display: none"])) .mobile-terminal-toolbar,
-  #terminal-section:has(#agent-panel:not([style*="display: none"])) .mobile-terminal-toolbar {
-    display: none !important;
-  }
-
   .mobile-terminal-toolbar-scroll {
     display: flex;
     width: 100%;
@@ -4018,86 +3103,9 @@ html[data-ui-motion="none"] :is(.flicker, .scanlines, .scanline) {
     font-size: 19px;
   }
 
-  #agent-panel {
-    position: fixed;
-    top: 48px;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    z-index: 80;
-    width: 100% !important;
-    height: calc(var(--visual-viewport-height) - 48px);
-    max-width: none !important;
-    min-width: 0;
-    border-left: 0;
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
-  }
-
-  .agent-panel-header {
-    min-height: 48px;
-  }
-
-  .agent-close-button {
-    display: inline-flex;
-    min-height: 40px;
-    align-items: center;
-    gap: 6px;
-    padding: 0 8px;
-  }
-
-  .agent-header-btn.agent-close-button {
-    width: auto;
-    height: auto;
-    min-height: 40px;
-    padding: 0 8px;
-    gap: 6px;
-  }
-
-  .agent-mobile-back,
-  .agent-header-btn .agent-mobile-back {
-    display: inline-flex;
-  }
-
-  .agent-back-label {
-    font-size: 12px;
-    font-weight: 600;
-  }
-
-  .agent-desktop-close,
-  .agent-header-btn .agent-desktop-close {
-    display: none;
-  }
-
-  .agent-quick-chip {
-    min-height: 32px;
-    padding: 0 10px;
-    font-size: 12px;
-  }
-
-  .agent-send-btn {
-    width: 40px;
-    height: 40px;
-  }
-
-  .agent-md-content .agent-md-code-action {
-    min-height: 30px;
-    padding: 4px 8px;
-    font-size: 11px;
-  }
-
-  .agent-confirm button {
-    min-height: 38px;
-    font-size: 12px;
-  }
-
   .sftp-panel-header {
     padding-top: env(safe-area-inset-top);
     min-height: calc(48px + env(safe-area-inset-top));
-  }
-
-  .agent-panel-composer {
-    padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
 
   #sftp-panel {
@@ -4106,7 +3114,7 @@ html[data-ui-motion="none"] :is(.flicker, .scanlines, .scanline) {
   }
 
   /* 自定义命令抽屉此前缺少移动端规则，在触屏平板下会按桌面公式停在 420px，
-     与同为非 Agent 抽屉的 SFTP 不一致；此处对齐 SFTP 的全视口行为。
+     与 SFTP 不一致；此处对齐 SFTP 的全视口行为。
      内联宽度已移除，故无需 !important 即可生效。 */
   #snippet-panel {
     width: 100vw;
@@ -4124,36 +3132,9 @@ html[data-ui-motion="none"] :is(.flicker, .scanlines, .scanline) {
     min-height: 40px;
   }
 
-  .ask-ai-selection-float {
-    max-width: calc(100vw - 24px);
-  }
-
   .cloudssh-search-box {
     max-width: calc(100% - 8px);
   }
-}
-
-/* ==================== Agent Progress Extend ==================== */
-
-.agent-progress-extend {
-  border-left: 3px solid var(--accent);
-  background: var(--accent-bg);
-  font-size: 11px;
-  margin: 4px 0;
-}
-
-.agent-progress-extend .material-symbols-outlined {
-  font-size: 14px;
-  color: var(--accent);
-}
-
-.agent-progress-extend .font-bold {
-  color: var(--accent);
-}
-
-.agent-progress-extend .agent-progress-detail {
-  color: var(--on-surface-variant);
-  opacity: 0.8;
 }
 
 /* ==================== Host IP Badge ==================== */

@@ -1,7 +1,12 @@
-// Agent exec channel — manages SSH exec channel lifecycle for command execution
+// Exec channel — manages SSH exec channel lifecycle for command execution
 
-import type { SSHChannel } from '../../ssh/channel';
-import type { ExecResult } from './types';
+import type { SSHChannel } from '../ssh/channel';
+
+export interface ExecResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
 
 /**
  * 输出捕获硬上限：防止 docker logs 等大输出命令把 DO isolate 内存打爆（OOM）。
@@ -112,7 +117,7 @@ class BoundedStreamCapture {
   }
 }
 
-export class AgentExecChannel {
+export class ExecChannel {
   private channelID: number;
   private channel: SSHChannel;
   private exitCode: number = -1;

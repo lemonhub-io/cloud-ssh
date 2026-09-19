@@ -1,11 +1,11 @@
 // DNS resolution + IP block check for SSRF protection (DNS rebinding defense)
 //
-// isBlockedHost() / validateBaseUrl() only check the hostname string.
+// isBlockedHost() only checks the hostname string.
 // A domain like evil.com can resolve to 127.0.0.1 or 169.254.169.254
 // and bypass those checks. This module resolves the hostname via
 // DNS-over-HTTPS (Cloudflare 1.1.1.1) and checks every resolved IP
-// against a unified block list that covers all cases from both
-// isBlockedHost() and validateBaseUrl(), including IPv6 edge cases.
+// against a unified block list that covers all cases from
+// isBlockedHost(), including IPv6 edge cases.
 
 interface DnsCacheEntry {
   ips: string[];
@@ -56,7 +56,7 @@ function isIPLiteral(hostname: string): boolean {
 
 /**
  * Check whether an IP address (resolved or literal) falls into a blocked
- * range. Unifies the logic from isBlockedHost() and validateBaseUrl(),
+ * range. Unifies the logic from isBlockedHost()
  * and additionally fixes the IPv4-mapped-IPv6-hex and expanded-IPv6-loopback
  * bypasses (VULN-03 / VULN-04) for the DNS-resolved-IP path.
  */
@@ -190,7 +190,7 @@ async function resolveHostname(hostname: string): Promise<string[]> {
  * still re-checked with the unified isBlockedIP to cover edge cases.
  *
  * Should be called **after** the fast string-based check
- * (isBlockedHost / validateBaseUrl) as a second defence layer.
+ * (isBlockedHost) as a second defence layer.
  */
 export async function checkHostResolved(
   hostname: string
@@ -202,7 +202,7 @@ export async function checkHostResolved(
 
   if (isIPLiteral(cleanHost)) {
     // IP literal — re-check with unified isBlockedIP (catches IPv6 edge cases
-    // that isBlockedHost/validateBaseUrl might miss)
+    // that isBlockedHost might miss)
     if (isBlockedIP(cleanHost)) {
       return { blocked: true, reason: `禁止连接内网或保留地址 ${cleanHost} (SSRF 防护)` };
     }

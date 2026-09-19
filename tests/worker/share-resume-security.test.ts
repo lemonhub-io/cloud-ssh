@@ -130,7 +130,6 @@ function createShareSession(expiresAt: number): { session: SSHSession; socket: {
         source: 'share',
         shareId: SHARE_ID,
         shareRef: 'ref-456',
-        allowAgent: false,
         allowSftp: true,
         allowMetadataMutation: false,
         allowHostKeyMutation: false,

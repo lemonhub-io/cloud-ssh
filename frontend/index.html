@@ -149,21 +149,6 @@
               <!-- 动态渲染：头像 + 用户名 -->
             </div>
             <button
-              id="ai-config-btn"
-              class="user-space-menu-action hover:opacity-80 transition-opacity cursor-pointer p-1 flex items-center justify-center"
-              data-i18n-title="agent.settings"
-              title="AI Agent 设置"
-            >
-              <span
-                class="material-symbols-outlined"
-                style="font-variation-settings: &quot;FILL&quot; 0"
-                >psychology</span
-              >
-              <span class="user-space-action-label" data-i18n="agent.settings"
-                >AI Agent 设置</span
-              >
-            </button>
-            <button
               id="logout-btn"
               class="user-space-menu-action hover:opacity-80 transition-opacity cursor-pointer p-1 flex items-center justify-center text-error"
               data-i18n-title="auth.logout"
@@ -770,23 +755,6 @@
                 >
                 <span class="drawer-btn-label" data-i18n="terminal.drawer.snippets">自定义命令</span>
               </button>
-              <button
-                id="agent-toggle-btn"
-                type="button"
-                role="tab"
-                class="drawer-segmented-btn hidden"
-                aria-selected="false"
-                data-drawer="agent"
-                data-i18n-title="terminal.agent"
-                title="AI Agent 助手"
-              >
-                <span
-                  class="material-symbols-outlined drawer-btn-icon"
-                  style="font-variation-settings: &quot;FILL&quot; 0"
-                  >psychology</span
-                >
-                <span class="drawer-btn-label" data-i18n="terminal.drawer.agent">Agent</span>
-              </button>
             </div>
             <button
               id="search-btn"
@@ -871,11 +839,6 @@
               <span class="material-symbols-outlined" aria-hidden="true"
                 >folder_open</span
               ><span data-i18n="terminal.sftp">SFTP 文件管理器</span>
-            </button>
-            <button id="mobile-agent-btn" type="button" class="hidden">
-              <span class="material-symbols-outlined" aria-hidden="true"
-                >psychology</span
-              ><span data-i18n="terminal.agent">AI Agent 助手</span>
             </button>
             <button id="mobile-export-btn" type="button">
               <span class="material-symbols-outlined" aria-hidden="true"
@@ -1060,22 +1023,6 @@
             <button type="button" data-terminal-key="~">~</button>
           </div>
         </nav>
-
-        <button
-          id="ask-ai-selection-btn"
-          type="button"
-          class="ask-ai-selection-float hidden cyber-button text-primary px-2 py-1 text-[11px] font-bold items-center gap-1"
-          data-i18n-title="terminal.askAISelection"
-          title="询问 AI 助手"
-        >
-          <span
-            class="material-symbols-outlined"
-            style="font-size: 16px; font-variation-settings: &quot;FILL&quot; 0"
-            aria-hidden="true"
-            >quick_phrases</span
-          >
-          <span data-i18n="terminal.askAISelection">询问 AI 助手</span>
-        </button>
 
         <!-- Footer -->
         <footer

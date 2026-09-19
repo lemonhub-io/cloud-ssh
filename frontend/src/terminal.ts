@@ -68,11 +68,6 @@ export interface SSHConnectionConfig {
   locationHint?: string;
 }
 
-export interface TerminalSelectionAnchor {
-  clientX: number;
-  clientY: number;
-}
-
 export type TerminalShortcutAction = 'search' | 'clear';
 
 /**
@@ -159,7 +154,6 @@ export class SSHTerminal {
   private restoreCursorBlinkAfterReturnPrompt: boolean = false;
   private onSessionClosed?: (event: CloseEvent, willReconnect: boolean) => void;
   private onSessionReady?: () => void;
-  private onAgentFrameHandler?: (msg: any) => void;
   private onOSDetectedHandler?: (serverId: number, os: string) => void;
   private sftpAttachUrl: string | null = null;
   private searchBox: HTMLElement | null = null;
@@ -177,8 +171,6 @@ export class SSHTerminal {
     cfColo: string | null,
     wsLatency: number | null
   ) => void;
-  private onSelectionChanged?: (selection: string, anchor: TerminalSelectionAnchor | null) => void;
-  private selectionAnchor: TerminalSelectionAnchor | null = null;
   private selectionPointerActive = false;
   private mobileSelectionMode = false;
   private mobileSelectionPointerId: number | null = null;
@@ -216,7 +208,6 @@ export class SSHTerminal {
   private readonly selectionPointerDownListener = (event: PointerEvent): void => {
     if (event.button !== 0) return;
     this.selectionPointerActive = true;
-    this.selectionAnchor = { clientX: event.clientX, clientY: event.clientY };
     if (this.mobileSelectionMode && event.pointerType !== 'mouse') {
       const cell = this.getTerminalCell(event.clientX, event.clientY);
       if (!cell) {
@@ -238,7 +229,6 @@ export class SSHTerminal {
   };
   private readonly selectionPointerMoveListener = (event: PointerEvent): void => {
     if (!this.selectionPointerActive) return;
-    this.selectionAnchor = { clientX: event.clientX, clientY: event.clientY };
     if (this.mobileSelectionPointerId === event.pointerId && this.mobileSelectionStart) {
       event.preventDefault();
       const cell = this.getTerminalCell(event.clientX, event.clientY);
@@ -246,9 +236,6 @@ export class SSHTerminal {
       return;
     }
     if (this.updateMobileScroll(event)) return;
-    if (this.terminal.hasSelection()) {
-      this.notifySelectionChanged();
-    }
   };
   private readonly selectionPointerUpListener = (event: PointerEvent): void => {
     if (!this.selectionPointerActive) return;
@@ -258,8 +245,6 @@ export class SSHTerminal {
       if (cell) this.updateMobileSelection(cell);
       this.finishMobileSelectionPointer();
       this.selectionPointerActive = false;
-      this.selectionAnchor = { clientX: event.clientX, clientY: event.clientY };
-      this.notifySelectionChanged();
       return;
     }
     const handledMobileScroll = this.finishMobileScroll(event.pointerId);
@@ -268,8 +253,6 @@ export class SSHTerminal {
       event.stopPropagation();
     }
     this.selectionPointerActive = false;
-    this.selectionAnchor = { clientX: event.clientX, clientY: event.clientY };
-    this.notifySelectionChanged();
     const selection = this.terminal.getSelection();
     if (selection && event.pointerType !== 'touch') {
       void this.copySelectionToClipboard(selection);
@@ -332,11 +315,6 @@ export class SSHTerminal {
       this.terminal.options.theme = theme;
     });
     this.registerCursorRestoreHandlers();
-    this.terminalDisposables.push(
-      this.terminal.onSelectionChange(() => {
-        this.notifySelectionChanged();
-      })
-    );
     this.container.addEventListener('pointerdown', this.selectionPointerDownListener, true);
     this.container.addEventListener('pointermove', this.selectionPointerMoveListener, true);
     window.addEventListener('pointerup', this.selectionPointerUpListener, true);
@@ -403,18 +381,8 @@ export class SSHTerminal {
     this.onSessionReady = handler;
   }
 
-  setAgentFrameHandler(handler: (msg: any) => void): void {
-    this.onAgentFrameHandler = handler;
-  }
-
   setOSDetectedHandler(handler: (serverId: number, os: string) => void): void {
     this.onOSDetectedHandler = handler;
-  }
-
-  sendWebSocketMessage(data: string): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(data);
-    }
   }
 
   /** 通过与物理键盘相同的 trzsz 输入管线发送移动端快捷键。 */
@@ -539,29 +507,12 @@ export class SSHTerminal {
     }
   }
 
-  setSelectionChangeHandler(
-    handler: (selection: string, anchor: TerminalSelectionAnchor | null) => void
-  ): void {
-    this.onSelectionChanged = handler;
-    this.notifySelectionChanged();
-  }
-
   clearSelection(): void {
     this.terminal.clearSelection();
-    this.selectionAnchor = null;
-    this.notifySelectionChanged();
   }
 
   getSFTPWebSocketUrl(): string | null {
     return this.sftpAttachUrl;
-  }
-
-  private notifySelectionChanged(): void {
-    const selection = this.terminal.getSelection();
-    if (!selection) {
-      this.selectionAnchor = null;
-    }
-    this.onSelectionChanged?.(selection, this.selectionAnchor);
   }
 
   private getTerminalCell(clientX: number, clientY: number): TerminalCell | null {
@@ -1125,11 +1076,6 @@ export class SSHTerminal {
               );
             this.onSessionReady?.();
             this.startHeartbeat();
-            return;
-          }
-
-          if (msg.type === 'agent_frame') {
-            this.onAgentFrameHandler?.(msg);
             return;
           }
 

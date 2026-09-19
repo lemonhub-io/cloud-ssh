@@ -9,7 +9,7 @@ import { blockOptionalThirdPartyAssets } from './helpers';
  *    `display: inline-flex` 特异性高于 `.mobile-only { display: none }`，
  *    导致该按钮在桌面端被强制显示。选择器必须保留 `:not(.mobile-only)`。
  * 2. 抽屉分段胶囊需要可辨识的边缘（描边 + 凹槽阴影），否则在浅色玻璃底上完全糊在一起。
- * 3. SFTP / 自定义命令 / AI Agent 三个抽屉必须共用同一宽度来源
+ * 3. SFTP / 自定义命令两个抽屉必须共用同一宽度来源
  *    （此前各自内联声明 420–600px 与 440–680px，同屏下宽度明显不一致）。
  */
 
@@ -66,19 +66,14 @@ test.describe('桌面视口', () => {
     await expect(snippetLabel).toHaveAttribute('data-i18n', 'terminal.drawer.snippets');
     await expect(snippetLabel).toHaveText('自定义命令');
     await expect(page.locator('#sftp-toggle-btn .drawer-btn-label')).toHaveText('SFTP');
-    await expect(page.locator('#agent-toggle-btn .drawer-btn-label')).toHaveText('Agent');
   });
 
-  test('三个侧边抽屉共用同一宽度来源', async ({ page }) => {
+  test('两个侧边抽屉共用同一宽度来源', async ({ page }) => {
     await openTerminalTab(page);
 
     const widths = await page.evaluate(async () => {
-      const agentModule = await (window as any).eval("import('/src/agent/agent-panel.ts')");
       const sftpModule = await (window as any).eval("import('/src/sftp-panel.ts')");
       const snippetModule = await (window as any).eval("import('/src/snippet-manager.ts')");
-
-      const agent = new agentModule.AgentPanel(document.getElementById('terminal-area')!, true);
-      agent.show();
 
       const sftp = new sftpModule.SFTPPanel(() => null);
       sftp.visible = true;
@@ -93,14 +88,13 @@ test.describe('桌面视口', () => {
         Math.round(document.getElementById(id)!.getBoundingClientRect().width);
 
       return {
-        agent: widthOf('agent-panel'),
         sftp: widthOf('sftp-panel'),
         snippet: widthOf('snippet-panel'),
       };
     });
 
     // 1280 视口：min(clamp(420px, 40vw, 600px), 100vw) === 512px
-    expect(widths).toEqual({ agent: 512, sftp: 512, snippet: 512 });
+    expect(widths).toEqual({ sftp: 512, snippet: 512 });
   });
 
   test('点击抽屉按钮时液态透镜滑块出现，收起时泊位', async ({ page }) => {

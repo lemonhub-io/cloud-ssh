@@ -1,10 +1,9 @@
-import { AgentPanel } from './agent/agent-panel';
 import { copyTextToClipboard } from './clipboard';
 import { maskIPAddress } from './host-display';
 import { t } from './i18n';
 import { getNetworkQuality } from './network-quality';
 import { SFTPPanel } from './sftp-panel';
-import { SSHTerminal, type TerminalSelectionAnchor } from './terminal';
+import { SSHTerminal } from './terminal';
 import { notify } from './ui-feedback';
 
 export type TabState = 'connecting' | 'connected' | 'disconnected';
@@ -14,15 +13,12 @@ export interface TabInfo {
   label: string;
   terminal: SSHTerminal;
   sftpPanel: SFTPPanel | null;
-  agentPanel: AgentPanel | null;
   containerEl: HTMLElement;
   hostInfo?: { host: string; port: number; username?: string; serverId?: number };
   state: TabState;
   cfLatency?: number;
   cfColo?: string;
   wsLatency?: number;
-  selectedText: string;
-  selectionAnchor: TerminalSelectionAnchor | null;
 }
 
 /**
@@ -37,7 +33,6 @@ export class TabManager {
   private tabBarEl: HTMLElement;
   private terminalAreaEl: HTMLElement;
   private tabCounter = 0;
-  private _isLoggedIn: boolean = false;
 
   /** 标签右键菜单的 document click 监听器（关闭菜单时统一移除，防止累积） */
   private tabCtxCloseHandler: ((e: MouseEvent) => void) | null = null;
@@ -57,11 +52,6 @@ export class TabManager {
   constructor(tabBarId: string, terminalAreaId: string) {
     this.tabBarEl = document.getElementById(tabBarId)!;
     this.terminalAreaEl = document.getElementById(terminalAreaId)!;
-  }
-
-  setLoggedIn(loggedIn: boolean): void {
-    this._isLoggedIn = loggedIn;
-    this.updateSelectionAction();
   }
 
   setAllTabsClosedHandler(handler: () => void): void {
@@ -88,7 +78,7 @@ export class TabManager {
   ): TabInfo {
     const id = `tab-${++this.tabCounter}-${Date.now()}`;
 
-    // 创建终端容器（flex 布局，支持 AgentPanel 右侧分栏）
+    // 创建终端容器（flex 布局，支持 SFTP 面板右侧分栏）
     const containerEl = document.createElement('div');
     containerEl.id = `terminal-container-${id}`;
     containerEl.className = 'absolute inset-0 overflow-hidden flex flex-row';
@@ -119,18 +109,10 @@ export class TabManager {
           tab.sftpPanel.dispose();
           tab.sftpPanel = null;
         }
-        // 清理该标签的 Agent 面板
-        if (tab.agentPanel) {
-          tab.agentPanel.dispose();
-          tab.agentPanel = null;
-        }
-        tab.selectedText = '';
-        tab.selectionAnchor = null;
-        this.updateSelectionAction(tab);
       }
     });
 
-    // 设置 SSH 就绪回调：初始化 SFTP 面板 + Agent 面板
+    // 设置 SSH 就绪回调：初始化 SFTP 面板
     terminal.setSessionReadyHandler(() => {
       const tab = this.tabs.get(id);
       if (tab) {
@@ -146,36 +128,6 @@ export class TabManager {
           tab.sftpPanel.bindEvents();
         }
         tab.sftpPanel.handleSSHReady();
-
-        // 初始化 Agent 面板（仅登录用户）
-        if (this._isLoggedIn && !tab.agentPanel) {
-          tab.agentPanel = new AgentPanel(document.body, true, tab.hostInfo?.serverId);
-          tab.agentPanel.render();
-          tab.agentPanel.setWebSocketSend((data: string) =>
-            tab.terminal.sendWebSocketMessage(data)
-          );
-          tab.agentPanel.setTerminalFillHandler(
-            () => ({
-              label: this.getTerminalTargetLabel(tab),
-              available: this.activeTabId === tab.id && tab.state === 'connected',
-            }),
-            (command: string) => {
-              const activeTab = this.getActiveTab();
-              if (activeTab?.id !== tab.id || tab.state !== 'connected') return false;
-              return tab.terminal.fillInput(command);
-            }
-          );
-          tab.terminal.setAgentFrameHandler((msg: any) => {
-            tab.agentPanel?.handleAgentFrame(msg);
-          });
-          // 互斥联动：Agent 打开前自动收起 SFTP 面板
-          tab.agentPanel.setBeforeShowHandler(() => {
-            tab.sftpPanel?.hide();
-          });
-          // AgentPanel 展开/收起时触发终端重新适配尺寸
-          tab.agentPanel.setLayoutChangeHandler(() => tab.terminal.fit());
-          this.updateSelectionAction(tab);
-        }
       }
     });
 
@@ -202,24 +154,12 @@ export class TabManager {
       label,
       terminal,
       sftpPanel: null,
-      agentPanel: null,
       containerEl,
       hostInfo,
       state: 'connecting',
-      selectedText: '',
-      selectionAnchor: null,
     };
 
     this.tabs.set(id, tab);
-    terminal.setSelectionChangeHandler((selection, anchor) => {
-      const currentTab = this.tabs.get(id);
-      if (!currentTab) return;
-      currentTab.selectedText = selection;
-      currentTab.selectionAnchor = anchor;
-      if (this.activeTabId === id) {
-        this.updateSelectionAction(currentTab);
-      }
-    });
     this.switchTab(id);
     this.renderTabBar();
     this.tabsChanged();
@@ -234,12 +174,10 @@ export class TabManager {
     if (!tab) return;
     if (this.activeTabId === tabId) return;
 
-    // 隐藏当前活跃标签的 SFTP 面板与 Agent 面板
+    // 隐藏当前活跃标签的 SFTP 面板
     if (this.activeTabId && this.activeTabId !== tabId) {
       const prevTab = this.tabs.get(this.activeTabId);
       if (prevTab) {
-        prevTab.agentPanel?.rejectPendingConfirmation(false);
-        prevTab.agentPanel?.hide();
         prevTab.containerEl.style.display = 'none';
         prevTab.sftpPanel?.hide();
       }
@@ -248,7 +186,6 @@ export class TabManager {
     // 显示目标标签
     tab.containerEl.style.display = 'flex';
     this.activeTabId = tabId;
-    document.body.classList.toggle('agent-panel-open', tab.agentPanel?.isOpen ?? false);
     document.dispatchEvent(new Event('cloudssh:active-terminal-change'));
 
     // Mount 并 fit 终端
@@ -256,7 +193,6 @@ export class TabManager {
 
     // 更新状态栏
     this.updateStatusBar(tab);
-    this.updateSelectionAction(tab);
     this.renderTabBar();
   }
 
@@ -271,10 +207,6 @@ export class TabManager {
       tab.sftpPanel.dispose();
       tab.sftpPanel = null;
     }
-    if (tab.agentPanel) {
-      tab.agentPanel.dispose();
-      tab.agentPanel = null;
-    }
     tab.terminal.dispose();
     tab.containerEl.remove();
     this.tabs.delete(tabId);
@@ -286,13 +218,11 @@ export class TabManager {
       if (remaining.length > 0) {
         this.switchTab(remaining[remaining.length - 1]);
       } else {
-        document.body.classList.remove('agent-panel-open');
         this.onAllTabsClosed?.();
       }
     }
 
     this.renderTabBar();
-    this.updateSelectionAction();
     this.tabsChanged();
   }
 
@@ -306,19 +236,13 @@ export class TabManager {
         tab.sftpPanel.dispose();
         tab.sftpPanel = null;
       }
-      if (tab.agentPanel) {
-        tab.agentPanel.dispose();
-        tab.agentPanel = null;
-      }
       tab.terminal.dispose();
       tab.containerEl.remove();
     }
 
     this.tabs.clear();
     this.activeTabId = null;
-    document.body.classList.remove('agent-panel-open');
     this.renderTabBar();
-    this.updateSelectionAction();
     this.onAllTabsClosed?.();
     this.tabsChanged();
   }
@@ -336,12 +260,6 @@ export class TabManager {
 
   hasAnyTab(): boolean {
     return this.tabs.size > 0;
-  }
-
-  private getTerminalTargetLabel(tab: TabInfo): string {
-    if (!tab.hostInfo) return tab.label;
-    const userPrefix = tab.hostInfo.username ? `${tab.hostInfo.username}@` : '';
-    return `${tab.label} · ${userPrefix}${tab.hostInfo.host}:${tab.hostInfo.port}`;
   }
 
   refreshTranslations(): void {
@@ -367,31 +285,9 @@ export class TabManager {
     if (tab.sftpPanel) {
       tab.sftpPanel.hide();
     }
-    tab.agentPanel?.rejectPendingConfirmation(false);
-    tab.agentPanel?.clearTerminalSelectionContext();
     tab.terminal.disconnect();
     tab.state = 'disconnected';
-    tab.selectedText = '';
-    tab.selectionAnchor = null;
-    this.updateSelectionAction(tab);
     this.renderTabBar();
-  }
-
-  /** 将当前终端选区附加到 Agent 输入区，等待用户补充问题后发送。 */
-  askAIAboutActiveSelection(): boolean {
-    const tab = this.getActiveTab();
-    const selection = tab?.selectedText || '';
-    if (!tab?.agentPanel || !selection.trim()) return false;
-
-    tab.sftpPanel?.hide();
-    const attached = tab.agentPanel.attachTerminalSelection(
-      selection,
-      this.getTerminalTargetLabel(tab)
-    );
-    if (attached) {
-      tab.terminal.clearSelection();
-    }
-    return attached;
   }
 
   // ==================== 渲染标签栏 ====================
@@ -726,39 +622,6 @@ export class TabManager {
         termInfo.textContent = '';
       }
     }
-  }
-
-  private updateSelectionAction(tab: TabInfo | null = this.getActiveTab()): void {
-    const button = document.getElementById('ask-ai-selection-btn');
-    if (!button) return;
-    const visible = !!(
-      this._isLoggedIn &&
-      tab &&
-      tab.id === this.activeTabId &&
-      tab.state === 'connected' &&
-      tab.agentPanel &&
-      tab.selectedText.trim() &&
-      tab.selectionAnchor
-    );
-    button.classList.toggle('hidden', !visible);
-    if (!visible || !tab?.selectionAnchor) return;
-
-    const gap = 12;
-    const viewportPadding = 8;
-    const { clientX, clientY } = tab.selectionAnchor;
-    const terminalBounds = tab.containerEl.getBoundingClientRect();
-    let left = clientX + gap;
-    let top = clientY + gap;
-
-    if (left + button.offsetWidth > terminalBounds.right - viewportPadding) {
-      left = clientX - button.offsetWidth - gap;
-    }
-    if (top + button.offsetHeight > terminalBounds.bottom - viewportPadding) {
-      top = clientY - button.offsetHeight - gap;
-    }
-
-    button.style.left = `${Math.max(terminalBounds.left + viewportPadding, left)}px`;
-    button.style.top = `${Math.max(terminalBounds.top + viewportPadding, top)}px`;
   }
 
   private tabsChanged(): void {

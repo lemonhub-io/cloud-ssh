@@ -7,13 +7,12 @@ import type { Env } from '../../src/types';
 // CloudSSH worker 外层接缝的安全回归测试。聚焦"关键安全领域"，
 // 不追求全分支覆盖——有状态组件走人工测试。
 //
-// 用例覆盖六类高危漏洞/访问控制边界：
+// 用例覆盖五类高危漏洞/访问控制边界：
 //   1. CSRF        — OAuth 回调 state 校验
 //   2. GitHub 策略 — 登录白名单、强制登录及 token 归属
 //   3. IDOR/越权   — handler 强制覆盖 body.user_id、DO 层二次归属校验
-//   4. SSRF 接缝   — AI base_url 经 validateBaseUrl 在路由层拦截
-//   5. 签名伪造    — cf_verified cookie HMAC 完整性
-//   6. CSWSH       — 跨站 WebSocket 劫持（Origin 校验）
+//   4. 签名伪造    — cf_verified cookie HMAC 完整性
+//   5. CSWSH       — 跨站 WebSocket 劫持（Origin 校验）
 //   附：一次性 token 防重放、SFTP attach 鉴权、速率限制
 //
 // 全部走 default export 的 fetch 入口，不导出内部函数，最接近真实
@@ -73,7 +72,7 @@ function makeRequest(
   return new Request(url.toString(), init);
 }
 
-// ---------- 集中 mock global.fetch（OAuth / Turnstile / LLM 代理都用它） ----------
+// ---------- 集中 mock global.fetch（OAuth / Turnstile 都用它） ----------
 
 const fetchMock = vi.fn();
 beforeEach(() => {
@@ -593,281 +592,9 @@ describe('安全 — 自定义主题接口边界', () => {
   });
 });
 
-// =====================================================================
-// 4. SSRF 接缝 — AI base_url 在路由层经 validateBaseUrl 拦截
-// =====================================================================
-
-describe('安全 — SSRF 接缝（AI base_url）', () => {
-  it('PUT /api/ai/config base_url=内网地址 → 400', async () => {
-    const worker = await loadWorker();
-    const env = makeEnv({
-      userDbStub: makeDOStub(async (req) => {
-        if (req.url.includes('/internal/session/verify')) {
-          return new Response(
-            JSON.stringify({ id: 1, github_id: 1, username: 'alice', avatar_url: '' }),
-            {
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
-        return new Response('{}', { status: 500 });
-      }),
-    });
-
-    const req = makeRequest('/api/ai/config', {
-      method: 'PUT',
-      cookies: { session: 'legit_session' },
-      body: { base_url: 'http://192.168.1.1/v1', model: 'gpt-4' },
-    });
-
-    const res = await worker.fetch(req, env);
-
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect((data as { error?: string }).error).toBeTruthy(); // validateBaseUrl 返回的中文 reason
-    // 不应到达 DO 持久化
-    expect(env.USER_DB.get({} as any).fetch).not.toHaveBeenCalledWith(
-      expect.objectContaining({ url: expect.stringContaining('/internal/ai-config') })
-    );
-  });
-
-  it('POST /api/ai/models 拒绝 Provider 重定向', async () => {
-    const worker = await loadWorker();
-    const env = makeEnv({
-      userDbStub: makeDOStub((req) => {
-        if (req.url.includes('/internal/session/verify')) {
-          return new Response(
-            JSON.stringify({ id: 1, github_id: 42, username: 'alice', avatar_url: '' }),
-            {
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
-        return new Response('{}', { status: 500 });
-      }),
-    });
-    // DoH responses for validateBaseUrlWithDNS (api.example.com → public IP)
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ Answer: [{ type: 1, data: '93.184.216.34' }] }), {
-        headers: { 'Content-Type': 'application/dns-json' },
-      })
-    );
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ Answer: [] }), {
-        headers: { 'Content-Type': 'application/dns-json' },
-      })
-    );
-    // Models endpoint returns redirect (should be blocked by redirect: 'manual')
-    fetchMock.mockResolvedValueOnce(
-      new Response(null, {
-        status: 302,
-        headers: { Location: 'http://127.0.0.1/models' },
-      })
-    );
-
-    const req = makeRequest('/api/ai/models', {
-      method: 'POST',
-      cookies: { session: '42:legit_session' },
-      body: { base_url: 'https://api.example.com/v1', api_key: 'test-key' },
-    });
-    const res = await worker.fetch(req, env);
-
-    expect(res.status).toBe(403);
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.example.com/v1/models',
-      expect.objectContaining({ redirect: 'manual' })
-    );
-  });
-
-  it('POST /api/ai/models 未传 api_key 时回退到已保存的 API 密钥', async () => {
-    const worker = await loadWorker();
-    const env = makeEnv({
-      userDbStub: makeDOStub((req) => {
-        if (req.url.includes('/internal/session/verify')) {
-          return new Response(
-            JSON.stringify({ id: 1, github_id: 42, username: 'alice', avatar_url: '' }),
-            {
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
-        if (req.url.includes('/internal/ai-config/decrypt')) {
-          return new Response(
-            JSON.stringify({
-              base_url: 'https://api.example.com/v1',
-              model: 'gpt-4o',
-              api_key: 'saved-secret-key',
-            }),
-            {
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
-        return new Response('{}', { status: 500 });
-      }),
-    });
-
-    // Mock DoH and /models endpoint
-    fetchMock.mockImplementation(async (input) => {
-      const urlStr =
-        typeof input === 'string'
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : (input as Request).url;
-      if (urlStr.includes('cloudflare-dns.com')) {
-        return new Response(JSON.stringify({ Answer: [{ type: 1, data: '93.184.216.34' }] }), {
-          headers: { 'Content-Type': 'application/dns-json' },
-        });
-      }
-      if (urlStr.includes('/models')) {
-        return new Response(
-          JSON.stringify({
-            data: [{ id: 'model-a' }, { id: 'model-b' }],
-          }),
-          {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        );
-      }
-      return new Response('{}', { status: 200 });
-    });
-
-    const req = makeRequest('/api/ai/models', {
-      method: 'POST',
-      cookies: { session: '42:legit_session' },
-      body: { base_url: 'https://api.example.com/v1' },
-    });
-    const res = await worker.fetch(req, env);
-
-    expect(res.status).toBe(200);
-    const data = (await res.json()) as { models: Array<{ id: string }> };
-    expect(data.models).toEqual([{ id: 'model-a' }, { id: 'model-b' }]);
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.example.com/v1/models',
-      expect.objectContaining({
-        headers: {
-          Authorization: 'Bearer saved-secret-key',
-        },
-      })
-    );
-  });
-
-  it('POST /api/ai/models 未传 api_key 且无已保存密钥 → 400', async () => {
-    const worker = await loadWorker();
-    const env = makeEnv({
-      userDbStub: makeDOStub((req) => {
-        if (req.url.includes('/internal/session/verify')) {
-          return new Response(
-            JSON.stringify({ id: 1, github_id: 42, username: 'alice', avatar_url: '' }),
-            {
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
-        if (req.url.includes('/internal/ai-config/decrypt')) {
-          return new Response(JSON.stringify({ error: 'No AI config found' }), {
-            status: 404,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-        return new Response('{}', { status: 500 });
-      }),
-    });
-
-    const req = makeRequest('/api/ai/models', {
-      method: 'POST',
-      cookies: { session: '42:legit_session' },
-      body: { base_url: 'https://api.example.com/v1' },
-    });
-    const res = await worker.fetch(req, env);
-
-    expect(res.status).toBe(400);
-    const data = (await res.json()) as { error: string };
-    expect(data.error).toBe('Missing base_url or api_key');
-  });
-
-  it('POST /api/ai/models 请求与已存 base_url 不一致且未传 key → 拒绝使用旧密钥并返回 400（防凭据外带）', async () => {
-    const worker = await loadWorker();
-    const env = makeEnv({
-      userDbStub: makeDOStub((req) => {
-        if (req.url.includes('/internal/session/verify')) {
-          return new Response(
-            JSON.stringify({ id: 1, github_id: 42, username: 'alice', avatar_url: '' }),
-            {
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
-        if (req.url.includes('/internal/ai-config/decrypt')) {
-          return new Response(
-            JSON.stringify({
-              base_url: 'https://api.openai.com/v1',
-              model: 'gpt-4o',
-              api_key: 'super-secret-openai-key',
-            }),
-            {
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
-        return new Response('{}', { status: 500 });
-      }),
-    });
-
-    // 攻击者或更换服务商的请求试图将请求定向到另一个地址，但不带 api_key
-    const req = makeRequest('/api/ai/models', {
-      method: 'POST',
-      cookies: { session: '42:legit_session' },
-      body: { base_url: 'https://attacker-logger.com/v1' },
-    });
-    const res = await worker.fetch(req, env);
-
-    expect(res.status).toBe(400);
-    const data = (await res.json()) as { error: string };
-    expect(data.error).toContain('接口地址与已保存配置不一致');
-    // 绝不能向该恶意或不同地址发出带有用户旧密钥的请求
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      expect.stringContaining('attacker-logger.com'),
-      expect.anything()
-    );
-  });
-
-  it('POST /api/ai/models 跨站 Origin 访问 → 403 Forbidden（CSRF 防护）', async () => {
-    const worker = await loadWorker();
-    const env = makeEnv({
-      userDbStub: makeDOStub((req) => {
-        if (req.url.includes('/internal/session/verify')) {
-          return new Response(
-            JSON.stringify({ id: 1, github_id: 42, username: 'alice', avatar_url: '' }),
-            {
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
-        return new Response('{}', { status: 500 });
-      }),
-    });
-
-    const req = makeRequest('/api/ai/models', {
-      method: 'POST',
-      headers: {
-        Origin: 'https://malicious-site.example',
-      },
-      cookies: { session: '42:legit_session' },
-      body: { base_url: 'https://api.example.com/v1', api_key: 'test-key' },
-    });
-    const res = await worker.fetch(req, env);
-
-    expect(res.status).toBe(403);
-    const data = (await res.json()) as { error: string };
-    expect(data.error).toBe('Forbidden');
-  });
-});
 
 // =====================================================================
-// 5. 签名伪造 — cf_verified cookie HMAC 完整性
+// 4. 签名伪造 — cf_verified cookie HMAC 完整性
 // =====================================================================
 
 describe('安全 — cf_verified 签名伪造', () => {
@@ -974,7 +701,7 @@ describe('安全 — cf_verified 签名伪造', () => {
 });
 
 // =====================================================================
-// 6. CSWSH — 跨站 WebSocket 劫持（Origin 校验）
+// 5. CSWSH — 跨站 WebSocket 劫持（Origin 校验）
 // =====================================================================
 
 describe('安全 — 跨站 WebSocket 劫持（CSWSH）', () => {
@@ -1333,7 +1060,6 @@ describe('安全 — 一次性 SSH 分享边界', () => {
             source: 'share',
             shareId: 'share-1',
             shareRef,
-            allowAgent: false,
             allowSftp: true,
             allowMetadataMutation: false,
             allowHostKeyMutation: false,
@@ -1373,7 +1099,6 @@ describe('安全 — 一次性 SSH 分享边界', () => {
     expect(forwardedConfig.sessionPolicy).toEqual(
       expect.objectContaining({
         source: 'share',
-        allowAgent: false,
         allowSftp: true,
       })
     );
@@ -1483,37 +1208,3 @@ describe('安全 — 速率限制', () => {
   });
 });
 
-describe('安全 — SSH 身份字段信任边界', () => {
-  it('Agent 使用 githubId 定位分片并用 userId 查询配置', async () => {
-    const { SSHSession } = await import('../../src/worker/ssh-session');
-    const idFromName = vi.fn(() => 'do-userdb-987');
-    let requestedUrl = '';
-    const userDbStub = makeDOStub((req) => {
-      requestedUrl = req.url;
-      return Response.json({
-        base_url: 'https://api.example.com/v1',
-        model: 'test-model',
-        api_key: 'test-key',
-      });
-    });
-    const env = makeEnv();
-    env.USER_DB = { idFromName, get: () => userDbStub } as any;
-    const session = new SSHSession(
-      {} as WebSocket,
-      {} as any,
-      { host: 'ssh.example.com', port: 22, username: 'alice', password: 'secret' },
-      true,
-      false,
-      undefined,
-      env,
-      '12',
-      '987'
-    );
-
-    const config = await (session as any).fetchAgentAIConfig('12', '987');
-
-    expect(idFromName).toHaveBeenCalledWith('987');
-    expect(requestedUrl).toContain('/internal/ai-config/decrypt?user_id=12');
-    expect(config?.model).toBe('test-model');
-  });
-});

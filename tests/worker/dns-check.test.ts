@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { validateBaseUrlWithDNS } from '../../src/worker/agent/ssrf';
 import { checkHostResolved, clearDnsCache, isBlockedIP } from '../../src/worker/dns-check';
 
 // =====================================================================
@@ -7,10 +6,9 @@ import { checkHostResolved, clearDnsCache, isBlockedIP } from '../../src/worker/
 // ---------------------------------------------------------------
 // Tests for the DNS rebinding defence layer (VULN-01 / VULN-02 fix).
 //
-// Three layers of tests:
+// Two layers of tests:
 //   1. isBlockedIP — unified IP range check (pure function)
 //   2. checkHostResolved — DoH resolution + IP check (mocked fetch)
-//   3. validateBaseUrlWithDNS — end-to-end AI base_url validation
 // =====================================================================
 
 // ── Mock global fetch for DoH ──────────────────────────────────────────
@@ -208,58 +206,5 @@ describe('checkHostResolved — domain DNS rebinding defence', () => {
     // Second call should not trigger additional fetch (cached)
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(r.blocked).toBe(false);
-  });
-});
-
-// =====================================================================
-// 3. validateBaseUrlWithDNS — end-to-end AI base_url validation
-// =====================================================================
-
-describe('validateBaseUrlWithDNS — string check + DNS check', () => {
-  it('blocks internal IP without DNS call (fast path)', async () => {
-    const r = await validateBaseUrlWithDNS('https://192.168.1.1/v1');
-    expect(r.valid).toBe(false);
-    expect(r.reason).toContain('内网');
-    // No DoH fetch should be made for IP literals
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('blocks domain resolving to internal IP (DNS rebinding)', async () => {
-    fetchMock
-      .mockResolvedValueOnce(dohResponse([{ type: 1, data: '10.0.0.1' }]))
-      .mockResolvedValueOnce(dohResponse([]));
-
-    const r = await validateBaseUrlWithDNS('https://evil.rebinding.com/v1');
-
-    expect(r.valid).toBe(false);
-    expect(r.reason).toContain('10.0.0.1');
-  });
-
-  it('blocks domain resolving to cloud metadata', async () => {
-    fetchMock
-      .mockResolvedValueOnce(dohResponse([{ type: 1, data: '169.254.169.254' }]))
-      .mockResolvedValueOnce(dohResponse([]));
-
-    const r = await validateBaseUrlWithDNS('https://metadata.evil.com/v1');
-
-    expect(r.valid).toBe(false);
-    expect(r.reason).toContain('169.254.169.254');
-  });
-
-  it('allows domain resolving to public IP', async () => {
-    fetchMock
-      .mockResolvedValueOnce(dohResponse([{ type: 1, data: '93.184.216.34' }]))
-      .mockResolvedValueOnce(dohResponse([]));
-
-    const r = await validateBaseUrlWithDNS('https://api.openai.com/v1');
-
-    expect(r.valid).toBe(true);
-  });
-
-  it('still validates protocol and format (string check first)', async () => {
-    const r = await validateBaseUrlWithDNS('file:///etc/passwd');
-    expect(r.valid).toBe(false);
-    expect(r.reason).toContain('协议');
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -37,7 +37,7 @@ describe('frontend production build', () => {
       .filter((item) => item.type === 'asset' && item.fileName.endsWith('.css'))
       .map((item) => String(item.source))
       .join('\n');
-  });
+  }, 60_000);
 
   afterAll(async () => {
     if (outDir) await rm(outDir, { recursive: true, force: true });

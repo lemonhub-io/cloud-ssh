@@ -68,11 +68,8 @@ import {
   type SSHPacket,
   type TerminalSize,
 } from '../types';
-import { AgentCore } from './agent/core';
-import { AgentExecChannel } from './agent/exec-channel';
-import { TerminalContext } from './agent/terminal-context';
-import type { AgentMemoryProvider, UnifiedServerMemory } from './agent/types';
 import { DirectTcpipStream } from './direct-tcpip-stream';
+import { ExecChannel } from './exec-channel';
 import { detectAndPersistRemoteOS } from './os-detect';
 import { SFTPHandler } from './sftp-handler';
 
@@ -93,7 +90,7 @@ const MAX_INPUT_QUEUE_BYTES = 4 * 1024 * 1024;
 type ActiveAuthMethod = 'none' | 'password' | 'publickey' | 'keyboard-interactive';
 
 export interface SSHSessionOptions {
-  /** Tunnel hops authenticate without allocating a PTY, Shell, SFTP, or Agent. */
+  /** Tunnel hops authenticate without allocating a PTY, Shell, or SFTP. */
   openShellOnAuth?: boolean;
   /** Only the final nested session owns the browser WebSocket lifecycle. */
   ownsWebSocket?: boolean;
@@ -206,10 +203,7 @@ export class SSHSession {
   private terminalSize: TerminalSize = { cols: 120, rows: 40 };
   private debugMode: boolean = false;
 
-  // Agent integration
-  private terminalContext: TerminalContext = new TerminalContext();
-  private agentCore: AgentCore | null = null;
-  private activeExecChannels: Map<number, AgentExecChannel> = new Map();
+  private activeExecChannels: Map<number, ExecChannel> = new Map();
   private directTcpipStreams: Map<number, DirectTcpipStream> = new Map();
   private pendingDirectTcpip: Map<
     number,
@@ -220,7 +214,6 @@ export class SSHSession {
     }
   > = new Map();
   private channelWindowWaiters: Map<number, Array<() => void>> = new Map();
-  private confirmationResolve: ((approved: boolean) => void) | null = null;
   private env: Env | null = null;
   private userId: string | null = null;
   private githubId: string | null = null;
@@ -554,7 +547,7 @@ export class SSHSession {
 
   /**
    * write deadline：弱网 TCP 半开时底层 write 可能永不 settle，导致 sendMutex
-   * 链条整体卡死（keepalive、窗口调整、Agent 通道关闭全部失效）。
+   * 链条整体卡死（keepalive、窗口调整、exec 通道关闭全部失效）。
    * 超时即关闭底层 socket —— pending 写会立刻被拒绝，读循环收到关闭事件后
    * 走正常 close() 流程，会话不会僵死。
    */
@@ -824,7 +817,7 @@ export class SSHSession {
    *    主动 keepalive 会因 sendMutex 卡死而先于会话失效，此计时器独立工作，
    *    在宽限期后可靠地终结僵尸会话，避免其耗尽 DO 资源。
    * 2. 用户无操作空闲超时：仅在会话就绪且持有 WebSocket 时检测，当超过 idleTimeoutMs
-   *    没有任何有效用户交互（键盘输入/resize/SFTP/Agent）时主动断开会话并关闭 DO，
+   *    没有任何有效用户交互（键盘输入/resize/SFTP）时主动断开会话并关闭 DO，
    *    避免挂机会话无休止消耗 Cloudflare Duration 额度。
    */
   private startIdleWatchdog(): void {
@@ -846,12 +839,6 @@ export class SSHSession {
         this.ownsWebSocket &&
         !this.isDetached()
       ) {
-        // AI Agent 执行保护：只要 Agent 仍处于运行状态，视作用户委托任务进行中，自动维持连接
-        if (this.agentCore?.getStatus() === 'running') {
-          this.recordUserActivity();
-          return;
-        }
-
         const idleElapsed = Date.now() - this.lastUserActivityAt;
 
         // 空闲超时前预警：当距超时还剩 60 秒时（短超时测试下取 idleTimeoutMs 的 1/3）且未曾发出预警，
@@ -1880,12 +1867,6 @@ export class SSHSession {
             this.recordShareTerminalOutput(outputData);
             this.queueLocalWindowAdjust(outputData.length, channel);
           }
-          // Feed terminal context for Agent
-          try {
-            this.terminalContext.appendOutput(this.textDecoder.decode(outputData));
-          } catch {
-            /* 解码/追加失败不影响主会话，静默忽略 */
-          }
         } else if (this.sftpHandler && channelID === this.sftpHandler.getChannelID()) {
           // SFTP channel data - forward to SFTP handler
           const sftpData = channel.handleChannelData(payload);
@@ -1896,7 +1877,7 @@ export class SSHSession {
           this.sftpHandler.onChannelData(sftpData);
           this.queueLocalWindowAdjust(sftpData.length, channel);
         } else {
-          // Exec channel data (Agent)
+          // Exec channel data
           const execCh = this.activeExecChannels.get(channelID);
           if (execCh) {
             const execData = channel.handleChannelData(payload);
@@ -1941,7 +1922,7 @@ export class SSHSession {
             this.queueLocalWindowAdjust(stderrData.length, channel);
           }
         } else {
-          // Exec channel extended data (stderr for Agent)
+          // Exec channel extended data (stderr)
           const execCh = this.activeExecChannels.get(channelID);
           if (execCh) {
             let offset = 1 + 4;
@@ -2136,22 +2117,6 @@ export class SSHSession {
         if (parsed.type === 'resize') {
           this.recordUserActivity();
           await this.handleResize(parsed.cols, parsed.rows);
-          return;
-        }
-
-        // Agent messages
-        // agent_stop / agent_confirm 已由 durable-object.ts 在 webSocketMessage 入口
-        // 提前拦截并通过 handleAgentControl 同步处理，不再到达此处。
-        if (parsed.type === 'agent_start') {
-          this.recordUserActivity();
-          await this.handleAgentStart(
-            parsed.message,
-            parsed.user_id,
-            parsed.locale,
-            parsed.timezone,
-            parsed.supersede === true,
-            typeof parsed.userIndex === 'number' ? parsed.userIndex : undefined
-          );
           return;
         }
 
@@ -2719,7 +2684,6 @@ export class SSHSession {
       const recorded = await this.writeShareAudit('session.started', {
         audited: true,
         sftpAllowed: this.config.sessionPolicy.allowSftp,
-        agentAllowed: false,
       });
       if (!recorded) {
         this.sendError('分享会话审计不可用，连接已终止', 'share_audit_unavailable');
@@ -2755,7 +2719,6 @@ export class SSHSession {
           JSON.stringify({
             type: 'session_capabilities',
             source: 'share',
-            agent: false,
             sftp: this.config.sessionPolicy.allowSftp,
             audited: true,
             expiresAt: this.config.sessionPolicy.sessionExpiresAt,
@@ -2793,7 +2756,7 @@ export class SSHSession {
         userId: this.userId,
         githubId: this.githubId,
         env: this.env,
-        executeCommand: (cmd, timeout) => this.executeAgentCommand(cmd, timeout),
+        executeCommand: (cmd, timeout) => this.executeRemoteCommand(cmd, timeout),
         onOSDetected: (detected) => {
           this.config.os = detected;
           try {
@@ -2820,194 +2783,17 @@ export class SSHSession {
     }
   }
 
-  // ==================== Agent Integration ====================
-
-  private async handleAgentStart(
-    userMessage: string,
-    userId?: string,
-    requestedLocale?: string,
-    requestedTimezone?: string,
-    supersede = false,
-    userIndex?: number
-  ): Promise<void> {
-    if (this.config.sessionPolicy?.source === 'share') {
-      this.sendAgentFrame({
-        type: 'agent_frame',
-        subType: 'error',
-        message: '分享会话不允许使用 AI Agent',
-      });
-      return;
-    }
-    if (this.state !== 'ready') {
-      this.sendAgentFrame({ type: 'agent_frame', subType: 'error', message: 'SSH 连接未就绪' });
-      return;
-    }
-
-    // Securely verify userId. Always use the authenticated session userId (this.userId).
-    // Reject requests if client provides a conflicting userId.
-    if (userId && this.userId && userId !== this.userId) {
-      this.sendAgentFrame({
-        type: 'agent_frame',
-        subType: 'error',
-        message: '用户身份不匹配，越权操作已被拦截',
-      });
-      return;
-    }
-
-    const effectiveUserId = this.userId;
-    if (!effectiveUserId) {
-      this.sendAgentFrame({
-        type: 'agent_frame',
-        subType: 'error',
-        message: '需要登录用户才能使用 AI 助手',
-      });
-      return;
-    }
-
-    if (this.agentCore?.getStatus() === 'running') {
-      if (supersede) {
-        if (this.confirmationResolve) {
-          this.confirmationResolve(false);
-          this.confirmationResolve = null;
-        }
-        this.agentCore.agentAbort('superseded');
-      } else {
-        this.sendAgentFrame({
-          type: 'agent_frame',
-          subType: 'error',
-          message: 'Agent 正在运行中，请先停止当前任务',
-        });
-        return;
-      }
-    }
-
-    if (!this.agentCore) {
-      let memoryProvider: AgentMemoryProvider | undefined;
-      const serverId = this.config.serverId;
-      const uid = this.userId;
-      const gid = this.githubId;
-      const env = this.env;
-      if (serverId && uid && gid && env) {
-        memoryProvider = {
-          fetchUnifiedMemory: async () => {
-            try {
-              const stub = env.USER_DB.get(env.USER_DB.idFromName(gid));
-              const res = await stub.fetch(
-                new Request(`http://internal/internal/servers/${serverId}/memory?user_id=${uid}`)
-              );
-              if (!res.ok) return { workLogs: [], knowledge: [] };
-              return (await res.json()) as UnifiedServerMemory;
-            } catch {
-              return { workLogs: [], knowledge: [] };
-            }
-          },
-          saveBatchMemory: async (batch) => {
-            try {
-              const stub = env.USER_DB.get(env.USER_DB.idFromName(gid));
-              await stub.fetch(
-                new Request(`http://internal/internal/servers/${serverId}/memory/batch`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ user_id: Number(uid), ...batch }),
-                })
-              );
-            } catch {
-              /* ignore */
-            }
-          },
-        };
-      }
-
-      this.agentCore = new AgentCore(
-        this.terminalContext,
-        (msg: any) => this.sendAgentFrame(msg),
-        async (uId: string) => this.fetchAgentAIConfig(uId, this.githubId!),
-        async (command: string, timeout: number, signal?: AbortSignal) =>
-          this.executeAgentCommand(command, timeout, signal),
-        async (command: string, reason: string) => this.askAgentConfirmation(command, reason),
-        undefined,
-        memoryProvider,
-        this.waitUntil
-      );
-    }
-
-    const locale = requestedLocale === 'en-US' ? 'en-US' : 'zh-CN';
-    const timezone =
-      typeof requestedTimezone === 'string' &&
-      requestedTimezone.length > 0 &&
-      requestedTimezone.length <= 64
-        ? requestedTimezone
-        : undefined;
-    void this.agentCore.handleAgentStart(
-      effectiveUserId,
-      userMessage,
-      locale,
-      timezone,
-      userIndex
-    );
-  }
-
-  /**
-   * 处理 Agent 控制消息（confirm/stop/reset），绕过被 handleAgentStart 阻塞的 WebSocket handler。
-   * 这些消息由 durable-object.ts 在调用 handleWebSocketMessage 之前提前路由。
-   */
-  handleAgentControl(type: string, msg: any): void {
-    this.recordUserActivity();
-    if (type === 'agent_confirm') {
-      if (this.confirmationResolve) {
-        this.confirmationResolve(msg.approved === true);
-        this.confirmationResolve = null;
-      }
-      return;
-    }
-    if (type === 'agent_stop') {
-      if (this.confirmationResolve) {
-        this.confirmationResolve(false);
-        this.confirmationResolve = null;
-      }
-      this.agentCore?.agentAbort('user_stopped');
-      return;
-    }
-    if (type === 'agent_reset') {
-      if (this.confirmationResolve) {
-        this.confirmationResolve(false);
-        this.confirmationResolve = null;
-      }
-      this.agentCore?.resetSession();
-      this.sendAgentFrame({
-        type: 'agent_frame',
-        subType: 'reset_done',
-      });
-      return;
-    }
-  }
-
-  private async fetchAgentAIConfig(
-    userId: string,
-    githubId: string
-  ): Promise<{ base_url: string; model: string; api_key: string } | null> {
-    if (!this.env) return null;
-    try {
-      const stub = this.env.USER_DB.get(this.env.USER_DB.idFromName(githubId));
-      const res = await stub.fetch(
-        new Request(`http://internal/internal/ai-config/decrypt?user_id=${userId}`)
-      );
-      if (!res.ok) return null;
-      return (await res.json()) as { base_url: string; model: string; api_key: string };
-    } catch {
-      return null;
-    }
-  }
+  // ==================== Exec channel command execution ====================
 
   /**
    * exec 输出超过捕获硬上限：删除本地通道引用（不再接收数据、不再续窗口），
    * 主动发送 CHANNEL_CLOSE —— sshd 会终止对应的远端命令（如无界输出的
-   * docker logs），并提前决议 closedPromise，让 Agent 拿到带截断标记的结果。
+   * docker logs），并提前决议 closedPromise，让调用方拿到带截断标记的结果。
    */
   private async terminateExecChannelOnCaptureLimit(
     channelID: number,
     channel: SSHChannel,
-    execCh: AgentExecChannel
+    execCh: ExecChannel
   ): Promise<void> {
     this.sendDebug(`Exec channel ${channelID} capture limit exceeded — closing channel`);
     this.activeExecChannels.delete(channelID);
@@ -3022,7 +2808,7 @@ export class SSHSession {
     }
   }
 
-  private async executeAgentCommand(
+  private async executeRemoteCommand(
     command: string,
     timeout: number,
     signal?: AbortSignal
@@ -3032,7 +2818,7 @@ export class SSHSession {
     const channel = new SSHChannel();
     this.channels.set(channelID, channel);
 
-    const execCh = new AgentExecChannel(channelID, channel);
+    const execCh = new ExecChannel(channelID, channel);
     this.activeExecChannels.set(channelID, execCh);
 
     // Open channel
@@ -3099,7 +2885,7 @@ export class SSHSession {
   }
 
   private waitForExecChannelOpen(
-    execCh: AgentExecChannel,
+    execCh: ExecChannel,
     channel: SSHChannel,
     command: string
   ): Promise<boolean> {
@@ -3133,34 +2919,8 @@ export class SSHSession {
     });
   }
 
-  /**
-   * 等待用户确认/取消。DO 防 Hibernate 由 AgentCore.runLoopKeepAlive 统一保活，
-   * 此处只需注册 resolve 回调即可。
-   */
-  private askAgentConfirmation(command: string, reason: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      this.confirmationResolve = resolve;
-      this.sendAgentFrame({
-        type: 'agent_frame',
-        subType: 'confirm_required',
-        command,
-        reason,
-      });
-    });
-  }
-
   private isExecChannel(channelID: number): boolean {
     return this.activeExecChannels.has(channelID);
-  }
-
-  private sendAgentFrame(msg: any): void {
-    try {
-      if (this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify(msg));
-      }
-    } catch {
-      /* WebSocket 已关闭，无法送达 */
-    }
   }
 
   private handleDetachedTerminalOutput(data: Uint8Array, channel: SSHChannel): void {
@@ -3189,7 +2949,7 @@ export class SSHSession {
     return this.state === 'ready' && !this.closed;
   }
 
-  /** 刷新最后一次用户交互活动时间戳（仅由键盘输入、窗口调整、SFTP、Agent 等主动操作触发） */
+  /** 刷新最后一次用户交互活动时间戳（仅由键盘输入、窗口调整、SFTP 等主动操作触发） */
   public recordUserActivity(): void {
     this.lastUserActivityAt = Date.now();
     this.idleWarningEmitted = false;
@@ -3337,9 +3097,6 @@ export class SSHSession {
       this.sftpHandler.dispose();
       this.sftpHandler = null;
     }
-    // Cleanup agent
-    this.agentCore?.agentAbort('connection_closed');
-    this.agentCore = null;
     for (const [, execCh] of this.activeExecChannels) {
       execCh.onClose();
     }
@@ -3356,10 +3113,6 @@ export class SSHSession {
       for (const wake of waiters) wake();
     }
     this.channelWindowWaiters.clear();
-    if (this.confirmationResolve) {
-      this.confirmationResolve(false);
-      this.confirmationResolve = null;
-    }
     this.channels.clear();
     this.channelDataQueue = [];
     this.channelDataQueueHead = 0;
