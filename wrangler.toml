@@ -11,6 +11,12 @@ routes = [
 
 [vars]
 DEBUG_MODE = "false"
+# P2P Agent 连接模式：开放 /api/agents 与 /api/agent/ws，浏览器经
+# WebRTC DataChannel 直连自托管 Agent；未置 true 时全部走 Worker 中继
+ENABLE_P2P = "true"
+# Cloudflare Realtime TURN key id（资源标识符，非凭据）；TURN_API_TOKEN
+# 为密钥，经 wrangler secret put / CI 注入，切勿写入本文件
+TURN_KEY_ID = "8a2726d9a1d6e5431747b0408e278e84"
 
 # 构建监视路径：仅源代码变动时触发重新构建
 [build]
@@ -61,6 +67,8 @@ name = "cloudssh-test"
 
 [env.test.vars]
 DEBUG_MODE = "true"
+ENABLE_P2P = "true"
+TURN_KEY_ID = "8a2726d9a1d6e5431747b0408e278e84"
 
 [[env.test.durable_objects.bindings]]
 name = "SSH_SESSION"
