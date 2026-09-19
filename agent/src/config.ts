@@ -56,7 +56,8 @@ export function resolveConfig(input: AgentConfigInput): AgentConfig {
   }
 
   const origin = normalizeOrigin(
-    input.server ?? process.env.AGENT_SERVER ?? 'https://ssh.lemonhub.online'
+    // 机端默认走 workers.dev：自定义域名可能对机房 IP 弹 CF 托管挑战（403）
+    input.server ?? process.env.AGENT_SERVER ?? 'https://cloudssh.mzhub.workers.dev'
   );
   const signalUrl =
     input.signalUrl ??

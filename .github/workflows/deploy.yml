@@ -94,7 +94,9 @@ jobs:
       - name: Post-deploy smoke check (production)
         if: github.ref == 'refs/heads/main'
         run: |
-          BASE="https://ssh.lemonhub.online"
+          # 自定义域名对机房 IP 有 CF 托管挑战（403 "Just a moment"），
+          # workers.dev 源不经挑战，是机端与 CI 探活的正确入口
+          BASE="https://cloudssh.mzhub.workers.dev"
           fail=0
           check() { # $1=label $2=path $3=expect-status $4=grep-pattern(optional)
             local code body

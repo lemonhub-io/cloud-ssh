@@ -576,6 +576,8 @@ export const zhCN = {
   'agent.installManual': '手动运行（需 Node.js ≥ 20 与源码）',
   'agent.copyInstall': '复制安装命令',
   'agent.installCopied': '安装命令已复制',
+  'agent.installFallback':
+    '若目标机位于机房网络、下载脚本被拦（Cloudflare 挑战页），可将命令中的域名替换为 {host} 再执行。',
   'agent.firstPromptTitle': '选择连接方式',
   'agent.firstPromptDesc': 'CloudSSH 支持可选的 P2P 直连：在能访问目标 SSH 主机的机器上安装一个轻量 Agent（一条命令即可），浏览器经 WebRTC 直连它，服务端零中转。不安装则走 Cloudflare 中继，功能完全一致。',
   'agent.firstPromptRelay': '使用中继连接（推荐）',

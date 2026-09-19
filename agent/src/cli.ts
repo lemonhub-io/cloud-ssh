@@ -10,7 +10,7 @@ Usage:
   cloudssh-agent --server <https://host> --token <githubId:agentId:secret> [options]
 
 Options:
-  --server <url>        CloudSSH site origin (default: https://ssh.lemonhub.online)
+  --server <url>        CloudSSH site origin (default: https://cloudssh.mzhub.workers.dev)
   --token <token>       Agent token (or AGENT_TOKEN env)
   --signal-url <url>    Override signaling WebSocket URL (or AGENT_SIGNAL_URL)
   --allowlist <hosts>   Comma-separated SSH target allowlist, *.domain.com wildcards (or AGENT_ALLOWLIST)

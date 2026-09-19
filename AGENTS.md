@@ -247,6 +247,7 @@ Required for optional features (configured in `wrangler.toml` or Cloudflare Dash
 - `ENABLE_P2P` - Optional; `true` opens agent registry + signaling APIs (`/api/agents`, `/api/agent/ws`) and the `p2pEnabled` flag in `/api/config`
 - `TURN_KEY_ID` / `TURN_API_TOKEN` - Optional; Cloudflare Realtime TURN key for per-session short-lived ICE credentials (absent → public STUN only)
 - `TURN_EXTRA_URIS` / `TURN_EXTRA_USERNAME` / `TURN_EXTRA_CREDENTIAL` - Optional; comma-separated self-hosted TURN URIs + static credentials appended to `iceServers`
+- `WORKERS_DEV_ORIGIN` - Optional; workers.dev origin used by install scripts as the default agent call-home endpoint (custom domain may serve CF managed challenges to datacenter IPs; declared in `wrangler.toml [vars]`)
 - `TURNSTILE_SECRET` / `TURNSTILE_SITEKEY` - Bot verification
 - `BASE_URL` - OAuth callback URL
 - `STRICT_HOST_KEY_VERIFY` - Optional; `false` skips host-key signature verification failures (default true, fails closed)
@@ -391,6 +392,8 @@ ci: CI/CD 变更
 
 32. **P2P Agent 通道不变量** - `SSHSession` 只消费 `SessionChannel`（`src/session-channel.ts`：send/close/readyState），Worker 侧由 WebSocket、Agent 侧由 `DataChannelSessionChannel` 满足；新增面向浏览器的会话消息不得假设底层是 WebSocket。信令消息全部经 `src/p2p-signaling.ts` 校验器白名单化（三向各一：browser/agent/to-agent），未过校验一律丢弃。一次性凭据（connect token、share ticket）在进入 P2P 分支前即被消费，**不可二次使用**：分享路径的 Agent 离线/信令失败只能做透明降级——Worker 在转发到 relay DO 前剔除 `mode` 参数，前端 `RtcTransport` 识别首帧非信令消息时把同一 WS 收养为普通中继（`AdoptedRelayTransport`）；saved-server 路径失败必须经 `/api/servers/:id/connect` 重新申请 URL。P2P resume 复用 `/api/ssh?mode=p2p&resume=...`，DO 恢复信令上下文后下发 `session_resume`，Agent 校验当前/上一代 token + 设备签名挑战（分享会话）后轮换 token、重发 ICE 配置——恢复轮的新 TURN 凭据在 `session_resume.iceServers` 下发。Agent 侧 `BLOCKED_PORTS`/`MAX_JUMP_HOSTS` 与 Worker 口径保持一致，allowlist 覆盖全部跳板节点。
 
+33. **CF 托管挑战与机端入口** - 自定义域名安全设置（Managed Challenge / Bot Fight 等）会对机房 IP 返回 403 挑战页，拦下的不只是浏览器：`/install.sh`、`/api/agent/download/*`、`/api/agent/ws` 信令 WS、`/internal/agent/*` 回传全部受影响。因此安装脚本把 **Agent 回连默认指向 `WORKERS_DEV_ORIGIN`（workers.dev，不经自定义域名挑战）**，二进制下载走 `本站代理 → workers.dev 代理 → GitHub 直连` 多镜像回退 + 体积校验（挑战页可能返回 200+HTML）。CI 冒烟检查也必须打 workers.dev 源（`deploy.yml`），探自定义域名只会拿到挑战页。
+
 ## Deployment Notes
 
 ### 双环境部署
@@ -446,6 +449,7 @@ pnpm run deploy:test     # 部署 test 环境
 - `ENABLE_P2P` - 可选，设为 `true` 时开放 Agent 注册/信令 API 与 `/api/config` 的 `p2pEnabled`（默认关闭）
 - `TURN_KEY_ID` / `TURN_API_TOKEN` - 可选，Cloudflare Realtime TURN key（P2P 推荐）
 - `TURN_EXTRA_URIS` / `TURN_EXTRA_USERNAME` / `TURN_EXTRA_CREDENTIAL` - 可选，自建 TURN 追加项
+- `WORKERS_DEV_ORIGIN` - 可选，安装脚本注入的 Agent 默认回连源（workers.dev 不经自定义域名挑战；`wrangler.toml [vars]` 已声明）
 - `TURNSTILE_SECRET` / `TURNSTILE_SITEKEY` - Bot 验证
 - `BASE_URL` - OAuth 回调地址（需与实际域名一致）
 

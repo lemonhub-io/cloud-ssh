@@ -7,6 +7,8 @@
  * Token 写入 chmod 600 的 env 文件而非命令行参数，避免 ps 泄露。
  */
 
+import type { Env } from '../types';
+
 const AGENT_RELEASE_BASE =
   'https://github.com/vexuni/cloud-ssh/releases/download/agent-latest';
 
@@ -15,10 +17,12 @@ const AGENT_ASSET_PATTERN = /^cloudssh-agent-(linux|darwin|windows)-(x64|arm64)(
 const INSTALL_SH = `#!/bin/sh
 # cloudssh-agent 一键安装 —— CloudSSH P2P 网关 Agent
 #   curl -fsSL __BASE__/install.sh | sh -s -- --token <githubId>:<agentId>:<secret>
-# 可选：--server <origin> 覆盖站点地址；--no-service 跳过开机自启
+# 可选：--server <origin> 覆盖 Agent 回连源（默认 workers.dev，绕过自定义
+#   域名的 CF 托管挑战）；--no-service 跳过开机自启
 set -eu
 
 BASE="__BASE__"
+WDD="__WDD__"
 TOKEN=""
 SERVER=""
 NO_SERVICE=0
@@ -38,7 +42,8 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$TOKEN" ] || { echo "error: --token <githubId>:<agentId>:<secret> is required" >&2; exit 2; }
-[ -n "$SERVER" ] || SERVER="$BASE"
+# Agent 回连默认走 workers.dev：自定义域名可能对机房 IP 弹出 CF 托管挑战（403）
+[ -n "$SERVER" ] || SERVER="\${WDD:-$BASE}"
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
@@ -54,21 +59,38 @@ case "$ARCH" in
 esac
 
 ASSET="cloudssh-agent-\${ASSET_OS}-\${ASSET_ARCH}"
-URL="$BASE/api/agent/download/$ASSET"
 INSTALL_DIR="\${CLOUDSSH_AGENT_DIR:-$HOME/.local/bin}"
 CONFIG_DIR="\${XDG_CONFIG_HOME:-$HOME/.config}/cloudssh-agent"
 BIN="$INSTALL_DIR/cloudssh-agent"
 ENV_FILE="$CONFIG_DIR/agent.env"
 
 mkdir -p "$INSTALL_DIR" "$CONFIG_DIR"
-echo "==> downloading $ASSET"
-if command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$URL" -o "$BIN"
-elif command -v wget >/dev/null 2>&1; then
-  wget -q "$URL" -O "$BIN"
-else
-  echo "error: curl or wget required" >&2; exit 1
-fi
+
+# 多镜像下载：本站代理 → workers.dev 代理（绕自定义域名挑战）→ GitHub 直连。
+# 体积校验挡住挑战页/错误页（CF 挑战也可能返回 200 + HTML）。
+GH_URL="https://github.com/vexuni/cloud-ssh/releases/download/agent-latest/$ASSET"
+fetch() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --connect-timeout 15 --max-time 600 "$1" -o "$BIN"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q "$1" -O "$BIN"
+  else
+    echo "error: curl or wget required" >&2; exit 1
+  fi
+}
+valid_binary() { [ -s "$BIN" ] && [ "$(wc -c < "$BIN")" -gt 1000000 ]; }
+
+URLS="$BASE/api/agent/download/$ASSET"
+[ -n "$WDD" ] && [ "$WDD" != "$BASE" ] && URLS="$URLS $WDD/api/agent/download/$ASSET"
+URLS="$URLS $GH_URL"
+ok=0
+for url in $URLS; do
+  echo "==> downloading $ASSET"
+  echo "    $url"
+  if fetch "$url" && valid_binary; then ok=1; break; fi
+  echo "    mirror failed, trying next"
+done
+[ "$ok" = 1 ] || { echo "error: all download mirrors failed" >&2; exit 1; }
 chmod +x "$BIN"
 
 # 凭据写入 600 权限的 env 文件，token 不进命令行
@@ -164,10 +186,11 @@ echo "    the agent should appear online in the CloudSSH Agent panel within seco
 
 const INSTALL_PS1 = `# cloudssh-agent 一键安装 —— CloudSSH P2P 网关 Agent（Windows）
 #   iex "& { $(irm __BASE__/install.ps1) } -Token '<githubId>:<agentId>:<secret>'"
-# 可选：-Server <origin> 覆盖站点地址；-NoService 跳过开机自启
+# 可选：-Server <origin> 覆盖 Agent 回连源（默认 workers.dev，绕过自定义
+#   域名的 CF 托管挑战）；-NoService 跳过开机自启
 param(
   [Parameter(Mandatory=$true)][string]$Token,
-  [string]$Server = "__BASE__",
+  [string]$Server = "",
   [switch]$NoService
 )
 $ErrorActionPreference = 'Stop'
@@ -175,14 +198,30 @@ if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
   throw "unsupported architecture: $env:PROCESSOR_ARCHITECTURE (x64 build only)"
 }
 $Base = "__BASE__"
+$Wdd = "__WDD__"
+if (-not $Server) { $Server = $Wdd; if (-not $Server) { $Server = $Base } }
 $Dir = Join-Path $env:LOCALAPPDATA 'CloudSSHAgent'
 $Bin = Join-Path $Dir 'cloudssh-agent.exe'
 $EnvFile = Join-Path $Dir 'agent.env'
 $Runner = Join-Path $Dir 'run-agent.ps1'
 New-Item -ItemType Directory -Force $Dir | Out-Null
 
-Write-Host "==> downloading cloudssh-agent-windows-x64.exe"
-Invoke-WebRequest "$Base/api/agent/download/cloudssh-agent-windows-x64.exe" -OutFile $Bin
+# 多镜像下载：本站代理 → workers.dev 代理（绕自定义域名挑战）→ GitHub 直连。
+# 体积校验挡住挑战页/错误页（CF 挑战也可能返回 200 + HTML）。
+$Asset = 'cloudssh-agent-windows-x64.exe'
+$Mirrors = @("$Base/api/agent/download/$Asset")
+if ($Wdd -and $Wdd -ne $Base) { $Mirrors += "$Wdd/api/agent/download/$Asset" }
+$Mirrors += "https://github.com/vexuni/cloud-ssh/releases/download/agent-latest/$Asset"
+$ok = $false
+foreach ($u in $Mirrors) {
+  Write-Host "==> downloading $Asset"
+  Write-Host "    $u"
+  try {
+    Invoke-WebRequest $u -OutFile $Bin -TimeoutSec 600
+    if ((Get-Item $Bin).Length -gt 1MB) { $ok = $true; break }
+  } catch { }
+}
+if (-not $ok) { throw "all download mirrors failed" }
 
 # 凭据写入 env 文件；计划任务执行包装脚本，token 不进任务命令行
 $SignalUrl = ($Server -replace '^http','ws') + '/api/agent/ws'
@@ -217,14 +256,19 @@ Write-Host "    verify: & $Bin --version"
 Write-Host "    the agent should appear online in the CloudSSH Agent panel within seconds"
 `;
 
-function withOrigin(script: string, origin: string): string {
-  return script.replaceAll('__BASE__', origin);
+function withOrigin(script: string, origin: string, wdd: string): string {
+  return script.replaceAll('__BASE__', origin).replaceAll('__WDD__', wdd);
 }
 
 /** 安装脚本响应（无认证；内容按请求源模板化，curl|sh 直接可用）。 */
-export function installScriptResponse(request: Request, kind: 'sh' | 'ps1'): Response {
+export function installScriptResponse(
+  request: Request,
+  kind: 'sh' | 'ps1',
+  env: Pick<Env, 'WORKERS_DEV_ORIGIN'>
+): Response {
   const origin = new URL(request.url).origin;
-  const body = withOrigin(kind === 'sh' ? INSTALL_SH : INSTALL_PS1, origin);
+  const wdd = env.WORKERS_DEV_ORIGIN?.trim() || origin;
+  const body = withOrigin(kind === 'sh' ? INSTALL_SH : INSTALL_PS1, origin, wdd);
   return new Response(body, {
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',

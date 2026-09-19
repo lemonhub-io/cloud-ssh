@@ -3,6 +3,7 @@
 import { localizedApiError } from './api-errors';
 import { copyTextToClipboard } from './clipboard';
 import { t } from './i18n';
+import { getPublicConfig } from './public-config';
 import { confirmAction, notify } from './ui-feedback';
 
 export interface AgentSummary {
@@ -241,6 +242,7 @@ export class AgentManager {
                   </div>
                 </div>
               </div>
+              <p id="agent-install-fallback" class="hidden text-xs text-muted mt-2"></p>
             </div>
           </div>
         </div>
@@ -426,6 +428,13 @@ export class AgentManager {
       if (winEl) winEl.textContent = commands.windows;
       if (manEl) manEl.textContent = commands.manual;
       tokenBox?.classList.remove('hidden');
+      // 自定义域名可能对机房 IP 弹 CF 挑战——提示可换 workers.dev 源下载脚本
+      const wdd = (await getPublicConfig())?.workersDevOrigin;
+      const fallbackEl = document.getElementById('agent-install-fallback');
+      if (fallbackEl && wdd && wdd !== window.location.origin) {
+        fallbackEl.textContent = t('agent.installFallback', { host: wdd });
+        fallbackEl.classList.remove('hidden');
+      }
       // 新建 Agent 自动成为首选（用户刚创建它就是要用）
       if (body.id) {
         this.pref.agentId = body.id;
