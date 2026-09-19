@@ -90,3 +90,22 @@ jobs:
           else
             printf '%s' "$CF_TURN_API_TOKEN" | pnpm exec wrangler secret put TURN_API_TOKEN
           fi
+
+      - name: Post-deploy smoke check (production)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -e
+          BASE="https://ssh.lemonhub.online"
+          echo "==> GET /api/health"
+          curl -sf --max-time 20 "$BASE/api/health" | grep -q '"ok"\|"status"' && echo ok
+          echo "==> GET /api/config (expect p2pEnabled)"
+          curl -sf --max-time 20 "$BASE/api/config" | grep -q '"p2pEnabled":true' && echo ok
+          echo "==> GET /install.sh"
+          curl -sf --max-time 20 "$BASE/install.sh" | head -1 | grep -q '#!/bin/sh' && echo ok
+          echo "==> GET /install.ps1"
+          curl -sf --max-time 20 "$BASE/install.ps1" | grep -qi 'param(' && echo ok
+          echo "==> HEAD /api/agent/download/cloudssh-agent-linux-x64"
+          curl -sfI --max-time 30 "$BASE/api/agent/download/cloudssh-agent-linux-x64" | head -1 | grep -q ' 200' && echo ok
+          echo "==> negative asset check (expect 400)"
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$BASE/api/agent/download/evil.exe")
+          [ "$code" = "400" ] && echo ok
