@@ -155,7 +155,12 @@ export interface DetectRemoteOSContext {
   serverId: number;
   userId: string;
   githubId: string;
-  env?: Env | null;
+  env?: Partial<Env> | null;
+  /**
+   * P2P 模式下由 Agent 注入的持久化回调（HTTP 回传 Worker）；
+   * 缺省时走 env.USER_DB DO 直连。
+   */
+  persistOS?: (os: string) => Promise<void>;
   executeCommand: (command: string, timeout: number) => Promise<{ stdout: string }>;
   onOSDetected?: (os: string) => void;
   sendDebug?: (message: string) => void;
@@ -176,7 +181,13 @@ export async function detectAndPersistRemoteOS(
       return null;
     }
 
-    if (ctx.env) {
+    if (ctx.persistOS) {
+      try {
+        await ctx.persistOS(os);
+      } catch (e) {
+        ctx.sendDebug?.(`OS detect persist error: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    } else if (ctx.env?.USER_DB) {
       try {
         const userDb = ctx.env.USER_DB as any;
         const stub = userDb.get(userDb.idFromName(ctx.githubId));

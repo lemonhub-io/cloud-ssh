@@ -115,7 +115,7 @@ export class UserDBDO {
    * 以 PRAGMA user_version 守卫可跳过全部幂等 DDL，把每次唤醒的初始化
    * 从二十余条 SQLite exec 降为一次读取（DO 唤醒与执行时长均计入计费）。
    */
-  private static readonly SCHEMA_VERSION = 1;
+  private static readonly SCHEMA_VERSION = 2;
 
   private initSchema(): void {
     try {
@@ -243,6 +243,17 @@ export class UserDBDO {
       );
       CREATE INDEX IF NOT EXISTS idx_server_knowledge_user_server
         ON server_knowledge(user_id, server_id, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS agents (
+        id                TEXT PRIMARY KEY,
+        user_id           INTEGER NOT NULL REFERENCES users(id),
+        name              TEXT NOT NULL,
+        token_hash        TEXT NOT NULL,
+        created_at        INTEGER NOT NULL,
+        last_seen_at      INTEGER,
+        last_seen_version TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_agents_user ON agents(user_id);
     `);
 
     // 清理已移除 AI 功能的遗留表（含加密存储的 API 密钥，幂等）
@@ -481,6 +492,35 @@ export class UserDBDO {
         const snippetId = parseInt(snippetMatch[1], 10);
         if (request.method === 'PUT') return this.handleUpdateSnippet(snippetId, request);
         if (request.method === 'DELETE') return this.handleDeleteSnippet(snippetId, request);
+      }
+
+      // --- P2P Agent 注册与管理 ---
+      if (path === '/internal/agents' && request.method === 'GET') {
+        const userIdStr = url.searchParams.get('user_id');
+        if (!userIdStr) return Response.json({ error: 'Missing user_id' }, { status: 400 });
+        const userId = parseInt(userIdStr, 10);
+        if (isNaN(userId)) return Response.json({ error: 'Invalid user_id' }, { status: 400 });
+        return this.handleListAgents(userId);
+      }
+      if (path === '/internal/agents' && request.method === 'POST') {
+        return this.handleCreateAgent(request);
+      }
+      const agentMatch = path.match(/^\/internal\/agents\/([^/]+)$/);
+      if (agentMatch && request.method === 'DELETE') {
+        const userId = Number(url.searchParams.get('user_id'));
+        return this.handleDeleteAgent(agentMatch[1], userId);
+      }
+      if (agentMatch && request.method === 'GET') {
+        const userId = Number(url.searchParams.get('user_id'));
+        return this.handleGetAgent(agentMatch[1], userId);
+      }
+      // 仅由 Worker 在 agent token 校验时调用（/api/agent/ws 与 /internal/agent/*）
+      if (path === '/internal/agents/validate' && request.method === 'POST') {
+        return this.handleValidateAgentToken(request);
+      }
+      // 仅由 agent:* DO 在 agent 心跳/上线时调用
+      if (path === '/internal/agents/heartbeat' && request.method === 'POST') {
+        return this.handleAgentHeartbeat(request);
       }
 
       return Response.json({ error: 'Not Found' }, { status: 404 });
@@ -1966,5 +2006,176 @@ export class UserDBDO {
     }
 
     return Response.json({ success: true, count: ids.length });
+  }
+
+  // ==================== P2P Agent 管理 ====================
+
+  /**
+   * Agent 令牌格式：`<githubId>:<agentId>:<secret>`。
+   * githubId 段让 Worker 无需全库扫描即可定位持有该 Agent 的 UserDBDO；
+   * 持久层只保存令牌哈希（与分享 capability 同口径）。
+   */
+  private static readonly MAX_AGENTS_PER_USER = 10;
+  private static readonly AGENT_SECRET_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
+  private static readonly AGENT_ID_PATTERN = /^[A-Za-z0-9-]{16,64}$/;
+
+  private async sha256Base64Url(value: string): Promise<string> {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+    let binary = '';
+    for (const byte of new Uint8Array(digest)) binary += String.fromCharCode(byte);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  private createAgentSecret(): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  private handleListAgents(userId: number): Response {
+    const rows = this.query<{
+      id: string;
+      name: string;
+      created_at: number;
+      last_seen_at: number | null;
+      last_seen_version: string | null;
+    }>(
+      'SELECT id, name, created_at, last_seen_at, last_seen_version FROM agents WHERE user_id = ? ORDER BY created_at DESC',
+      userId
+    );
+    return Response.json({ agents: rows });
+  }
+
+  private async handleCreateAgent(request: Request): Promise<Response> {
+    const body = await request.json<{ user_id?: number; name?: string }>();
+    const userId = Number(body.user_id);
+    if (!Number.isInteger(userId)) {
+      return Response.json({ error: 'Missing user_id' }, { status: 400 });
+    }
+    const name = typeof body.name === 'string' ? body.name.trim().slice(0, 64) : '';
+    if (!name) {
+      return Response.json({ error: 'Invalid agent name' }, { status: 400 });
+    }
+    const count = this.one<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM agents WHERE user_id = ?',
+      userId
+    );
+    if ((count?.count ?? 0) >= UserDBDO.MAX_AGENTS_PER_USER) {
+      return Response.json({ error: 'Agent limit reached' }, { status: 409 });
+    }
+    const owner = this.one<{ github_id: number }>(
+      'SELECT github_id FROM users WHERE id = ?',
+      userId
+    );
+    if (!owner) {
+      return Response.json({ error: 'User not found' }, { status: 404 });
+    }
+    const agentId = crypto.randomUUID();
+    const secret = this.createAgentSecret();
+    const token = `${owner.github_id}:${agentId}:${secret}`;
+    const tokenHash = await this.sha256Base64Url(token);
+    this.db.exec(
+      'INSERT INTO agents (id, user_id, name, token_hash, created_at) VALUES (?, ?, ?, ?, ?)',
+      agentId,
+      userId,
+      name,
+      tokenHash,
+      Date.now()
+    );
+    return Response.json(
+      {
+        id: agentId,
+        name,
+        created_at: Date.now(),
+        // 令牌只在创建响应中返回一次；持久层仅存哈希。
+        token,
+      },
+      { status: 201 }
+    );
+  }
+
+  private handleGetAgent(agentId: string, userId: number): Response {
+    const row = this.one<{
+      id: string;
+      name: string;
+      created_at: number;
+      last_seen_at: number | null;
+      last_seen_version: string | null;
+    }>(
+      'SELECT id, name, created_at, last_seen_at, last_seen_version FROM agents WHERE id = ? AND user_id = ?',
+      agentId,
+      userId
+    );
+    if (!row) return Response.json({ error: 'Agent not found' }, { status: 404 });
+    return Response.json(row);
+  }
+
+  private handleDeleteAgent(agentId: string, userId: number): Response {
+    if (!Number.isInteger(userId)) {
+      return Response.json({ error: 'Missing user_id' }, { status: 400 });
+    }
+    const existing = this.one<{ user_id: number }>(
+      'SELECT user_id FROM agents WHERE id = ?',
+      agentId
+    );
+    if (!existing) return Response.json({ error: 'Agent not found' }, { status: 404 });
+    if (existing.user_id !== userId) {
+      return Response.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    this.db.exec('DELETE FROM agents WHERE id = ? AND user_id = ?', agentId, userId);
+    return Response.json({ success: true });
+  }
+
+  /**
+   * 校验 `<githubId>:<agentId>:<secret>` 令牌。
+   * UserDBDO 实例名即 githubId，因此令牌到达本 DO 时 owner 归属已确定；
+   * 这里只需比对 agentId 段的哈希。
+   */
+  private async handleValidateAgentToken(request: Request): Promise<Response> {
+    const body = await request.json<{ token?: string }>();
+    const token = typeof body.token === 'string' ? body.token : '';
+    const parts = token.split(':');
+    if (parts.length !== 3) {
+      return Response.json({ error: 'Invalid agent token' }, { status: 403 });
+    }
+    const [, agentId, secret] = parts;
+    if (
+      !UserDBDO.AGENT_ID_PATTERN.test(agentId) ||
+      !UserDBDO.AGENT_SECRET_PATTERN.test(secret)
+    ) {
+      return Response.json({ error: 'Invalid agent token' }, { status: 403 });
+    }
+    const row = this.one<{ user_id: number; name: string; token_hash: string }>(
+      'SELECT user_id, name, token_hash FROM agents WHERE id = ?',
+      agentId
+    );
+    if (!row || (await this.sha256Base64Url(token)) !== row.token_hash) {
+      return Response.json({ error: 'Invalid agent token' }, { status: 403 });
+    }
+    return Response.json({ agentId, userId: row.user_id, name: row.name });
+  }
+
+  private async handleAgentHeartbeat(request: Request): Promise<Response> {
+    const body = await request.json<{
+      user_id?: number;
+      agent_id?: string;
+      version?: string;
+    }>();
+    const userId = Number(body.user_id);
+    const agentId = typeof body.agent_id === 'string' ? body.agent_id : '';
+    if (!Number.isInteger(userId) || !UserDBDO.AGENT_ID_PATTERN.test(agentId)) {
+      return Response.json({ error: 'Invalid heartbeat' }, { status: 400 });
+    }
+    const version =
+      typeof body.version === 'string' && body.version.length <= 32 ? body.version : null;
+    this.db.exec(
+      'UPDATE agents SET last_seen_at = ?, last_seen_version = ? WHERE id = ? AND user_id = ?',
+      Date.now(),
+      version,
+      agentId,
+      userId
+    );
+    return Response.json({ success: true });
   }
 }

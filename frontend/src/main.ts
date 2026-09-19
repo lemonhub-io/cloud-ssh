@@ -1,7 +1,14 @@
+import { getP2PPreference } from './agent-manager';
 import { ConnectionForm } from './auth-form';
 import { initI18n, onLocaleChange, t } from './i18n';
 import { MobileTerminalController } from './mobile-terminal';
+import { getPublicConfig } from './public-config';
 import { ServerList } from './server-list';
+import {
+  appendP2PParams,
+  openSessionChannel,
+  type SessionTransportLike,
+} from './session-transport';
 import {
   type ClaimedShare,
   renderShareEnded,
@@ -100,10 +107,10 @@ function getTabManager(): TabManager {
         return;
       }
       try {
-        const ws = await requestSavedServerWebSocket(serverId);
+        const ws = await requestSavedServerChannel(serverId);
         const { terminal } = showTerminalWithNewTab(tab.label, tab.hostInfo);
         terminal.mount();
-        const reconnectFactory = () => requestSavedServerWebSocket(serverId);
+        const reconnectFactory = () => requestSavedServerChannel(serverId);
         terminal.connectWithWebSocket(ws, tab.hostInfo, { reconnectFactory });
       } catch (e) {
         notify(e instanceof Error ? e.message : String(e), { variant: 'danger' });
@@ -226,10 +233,17 @@ function initTerminalTab(): void {
   const tm = getTabManager();
   const tab = tm.createTab(serverName, host && port ? { host, port } : undefined);
 
-  const ws = new WebSocket(wsUrl);
-  ws.binaryType = 'arraybuffer';
   const hostInfo = host && port ? { host, port } : undefined;
-  tab.terminal.connectWithWebSocket(ws, hostInfo);
+  void openSessionChannel(wsUrl)
+    .then((transport) => tab.terminal.connectWithWebSocket(transport, hostInfo))
+    .catch(() => {
+      const errorDiv = document.createElement('div');
+      errorDiv.style.color = 'var(--error)';
+      errorDiv.style.padding = '2em';
+      errorDiv.style.fontFamily = 'monospace';
+      errorDiv.textContent = t('terminal.invalidUrl');
+      document.body.replaceChildren(errorDiv);
+    });
 }
 
 // ==================== 页面切换 ====================
@@ -354,7 +368,11 @@ function showTerminalWithNewTab(
   return { tab, terminal: tab.terminal };
 }
 
-function showTerminalFromServer(wsUrl: string, serverName: string, hostInfo?: SSHHostInfo): void {
+async function showTerminalFromServer(
+  wsUrl: string,
+  serverName: string,
+  hostInfo?: SSHHostInfo
+): Promise<void> {
   if (!validateWsUrl(wsUrl)) {
     notify(t('server.invalidWs'), {
       title: t('server.connectFailed'),
@@ -367,15 +385,34 @@ function showTerminalFromServer(wsUrl: string, serverName: string, hostInfo?: SS
 
   terminal.mount();
 
-  // 通过 wsUrl（含 one-time-token）建立连接
-  const ws = new WebSocket(wsUrl);
-  ws.binaryType = 'arraybuffer';
+  // P2P 偏好生效时把一次性连接 URL 升级为信令地址；信令失败经重新铸 token 回退中继
   const serverId = hostInfo?.serverId;
-  const reconnectFactory = serverId ? () => requestSavedServerWebSocket(serverId) : undefined;
-  terminal.connectWithWebSocket(ws, hostInfo, { reconnectFactory });
+  const pref = getP2PPreference();
+  const p2pEnabled = (await getPublicConfig())?.p2pEnabled === true;
+  const wantP2P = p2pEnabled && pref.mode === 'p2p';
+  const targetUrl = wantP2P ? appendP2PParams(wsUrl, pref.agentId) : wsUrl;
+
+  let transport: SessionTransportLike;
+  try {
+    transport = await openSessionChannel(targetUrl, async () => {
+      if (!serverId) throw new Error(t('server.invalidWs'));
+      return fetchSavedServerWsUrl(serverId);
+    });
+  } catch (e) {
+    notify(e instanceof Error ? e.message : String(e), {
+      title: t('server.connectFailed'),
+      variant: 'danger',
+    });
+    return;
+  }
+
+  const reconnectFactory = serverId
+    ? () => requestSavedServerChannel(serverId)
+    : undefined;
+  terminal.connectWithWebSocket(transport, hostInfo, { reconnectFactory });
 }
 
-function showSharedTerminal(claim: ClaimedShare): void {
+async function showSharedTerminal(claim: ClaimedShare): Promise<void> {
   if (!validateWsUrl(claim.wsUrl)) {
     renderShareEnded();
     return;
@@ -388,14 +425,26 @@ function showSharedTerminal(claim: ClaimedShare): void {
   if (tabBar) tabBar.style.display = 'none';
   const { terminal } = showTerminalWithNewTab(claim.serverName);
   terminal.mount();
-  const socket = new WebSocket(claim.wsUrl);
-  socket.binaryType = 'arraybuffer';
+
+  // 分享 P2P：owner 有在线 Agent 时经 DataChannel 直连；Agent 离线时服务端
+  // 透明回退中继，RtcTransport 检测到非信令首帧后收养该 WS 为中继传输。
+  // ticket 一次性消费，不可重铸——不提供 refetch 回退。
+  const p2pEnabled = (await getPublicConfig())?.p2pEnabled === true;
+  const targetUrl = p2pEnabled ? appendP2PParams(claim.wsUrl) : claim.wsUrl;
+  let transport: SessionTransportLike;
+  try {
+    transport = await openSessionChannel(targetUrl);
+  } catch {
+    renderShareEnded();
+    return;
+  }
   // 分享会话：仅允许秒级恢复（ticket 已一次性消费，完整重连不可能），
   // 恢复彻底失败时在终端内宣告分享结束。
-  terminal.connectWithWebSocket(socket, undefined, { resumeOnly: true });
+  terminal.connectWithWebSocket(transport, undefined, { resumeOnly: true });
 }
 
-async function requestSavedServerWebSocket(serverId: number): Promise<WebSocket> {
+/** 铸一次性连接 token 并换取会话 WebSocket URL（每次调用产生新 token）。 */
+async function fetchSavedServerWsUrl(serverId: number): Promise<string> {
   const response = await fetch(`/api/servers/${serverId}/connect`, { method: 'POST' });
   if (!response.ok) {
     const contentType = response.headers.get('content-type') || '';
@@ -409,9 +458,25 @@ async function requestSavedServerWebSocket(serverId: number): Promise<WebSocket>
   if (typeof wsUrl !== 'string' || !validateWsUrl(wsUrl)) {
     throw new Error(t('server.invalidWs'));
   }
-  const socket = new WebSocket(wsUrl);
-  socket.binaryType = 'arraybuffer';
-  return socket;
+  return wsUrl;
+}
+
+/**
+ * 打开已保存服务器的会话传输：P2P 偏好生效时先走 RTC 信令；
+ * token 在首次升级即被消费，信令失败时重新铸 token 回退中继。
+ */
+async function requestSavedServerChannel(serverId: number): Promise<SessionTransportLike> {
+  const wsUrl = await fetchSavedServerWsUrl(serverId);
+  const pref = getP2PPreference();
+  const p2pEnabled = (await getPublicConfig())?.p2pEnabled === true;
+  if (!p2pEnabled || pref.mode !== 'p2p') {
+    const socket = new WebSocket(wsUrl);
+    socket.binaryType = 'arraybuffer';
+    return socket;
+  }
+  return openSessionChannel(appendP2PParams(wsUrl, pref.agentId), () =>
+    fetchSavedServerWsUrl(serverId)
+  );
 }
 
 // ==================== 断开连接处理 ====================

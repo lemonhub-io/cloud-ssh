@@ -16,6 +16,7 @@ import {
   type SFTPSortOptions,
 } from './sftp-helpers';
 import { updateSelection } from './sftp-selection';
+import type { SessionTransportLike } from './session-transport';
 import { Deferred, UploadWaiter } from './sftp-transfer';
 import {
   confirmDeleteItems,
@@ -39,6 +40,16 @@ export interface SFTPFileEntry {
 
 export type GetSFTPWebSocketUrlFn = () => string | null;
 
+/**
+ * SFTP 数据通道工厂：中继模式返回新 WebSocket，P2P 模式返回
+ * 会话 PeerConnection 上的 'sftp' DataChannel（可能异步）。
+ * null 表示通道尚未就绪（sftp_attach 未到达或会话未建立）。
+ */
+export type GetSFTPChannelFn = () =>
+  | SessionTransportLike
+  | Promise<SessionTransportLike>
+  | null;
+
 const UPLOAD_CHUNK_SIZE = 128 * 1024;
 const UPLOAD_CONCURRENCY = 8;
 const DOWNLOAD_URL_REVOKE_DELAY_MS = 1000;
@@ -55,12 +66,12 @@ export class SFTPPanel {
   private selectedEntries: Map<string, SFTPFileEntry> = new Map();
   private selectionAnchorIndex: number | null = null;
   private pendingDeleteCount = 0;
-  private getWebSocketUrl: GetSFTPWebSocketUrlFn;
-  private ws: WebSocket | null = null;
+  private getChannel: GetSFTPChannelFn;
+  private ws: SessionTransportLike | null = null;
   private connectingPromise: Promise<void> | null = null;
   private sftpWsRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingSends: (string | ArrayBuffer | Uint8Array)[] = [];
-  private closedByPanel: WeakSet<WebSocket> = new WeakSet();
+  private closedByPanel: WeakSet<object> = new WeakSet();
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private visible: boolean = false;
   private initializing: boolean = false;
@@ -104,8 +115,8 @@ export class SFTPPanel {
     }
   };
 
-  constructor(getWebSocketUrl: GetSFTPWebSocketUrlFn) {
-    this.getWebSocketUrl = getWebSocketUrl;
+  constructor(getChannel: GetSFTPChannelFn) {
+    this.getChannel = getChannel;
     this.container = this.createPanel();
     document.body.appendChild(this.container);
 
@@ -458,8 +469,8 @@ export class SFTPPanel {
       return this.connectingPromise;
     }
 
-    const wsUrl = this.getWebSocketUrl();
-    if (!wsUrl) {
+    const channelOrPromise = this.getChannel();
+    if (!channelOrPromise) {
       this.setStatus(t('sftp.waitingWebSocket'));
       if (!this.sftpWsRetryTimer) {
         this.sftpWsRetryTimer = setTimeout(() => {
@@ -470,64 +481,71 @@ export class SFTPPanel {
       return;
     }
 
-    this.connectingPromise = new Promise((resolve, reject) => {
-      const ws = new WebSocket(wsUrl);
+    this.connectingPromise = (async () => {
+      const ws = await channelOrPromise;
       this.ws = ws;
       ws.binaryType = 'arraybuffer';
 
-      ws.onopen = () => {
-        this.connectingPromise = null;
-        this.startHeartbeat();
-        this.flushPendingSends();
-        resolve();
-      };
+      await new Promise<void>((resolve, reject) => {
+        ws.onopen = () => {
+          this.connectingPromise = null;
+          this.startHeartbeat();
+          this.flushPendingSends();
+          resolve();
+        };
 
-      ws.onmessage = (event) => {
-        if (typeof event.data === 'string') {
-          try {
-            this.handleMessage(JSON.parse(event.data));
-          } catch {
-            this.showError(t('sftp.invalidResponse'));
+        ws.onmessage = (event) => {
+          if (typeof event.data === 'string') {
+            try {
+              this.handleMessage(JSON.parse(event.data));
+            } catch {
+              this.showError(t('sftp.invalidResponse'));
+            }
+            return;
           }
-          return;
-        }
 
-        if (event.data instanceof ArrayBuffer) {
-          this.handleBinaryData(new Uint8Array(event.data));
-        }
-      };
+          if (event.data instanceof ArrayBuffer) {
+            this.handleBinaryData(new Uint8Array(event.data));
+          }
+        };
 
-      ws.onerror = () => {
-        const message = t('sftp.websocketError');
-        this.stopHeartbeat();
-        this.connectingPromise = null;
-        this.initializing = false;
-        this.sftpReady = false;
-        this.pendingSends = [];
-        this.rejectUploadWaiter(message);
-        this.rejectDownloadWaiter(message);
-        this.showError(message);
-        reject(new Error(message));
-      };
-
-      ws.onclose = () => {
-        this.stopHeartbeat();
-        if (this.ws === ws) {
-          this.ws = null;
-        }
-        this.connectingPromise = null;
-
-        if (!this.closedByPanel.has(ws)) {
-          const message = t('sftp.connectionClosed');
+        ws.onerror = () => {
+          const message = t('sftp.websocketError');
+          this.stopHeartbeat();
+          this.connectingPromise = null;
           this.initializing = false;
           this.sftpReady = false;
           this.pendingSends = [];
           this.rejectUploadWaiter(message);
           this.rejectDownloadWaiter(message);
-          if (this.visible) this.showError(message);
+          this.showError(message);
+          reject(new Error(message));
+        };
+
+        ws.onclose = () => {
+          this.stopHeartbeat();
+          if (this.ws === ws) {
+            this.ws = null;
+          }
+          this.connectingPromise = null;
+
+          if (!this.closedByPanel.has(ws)) {
+            const message = t('sftp.connectionClosed');
+            this.initializing = false;
+            this.sftpReady = false;
+            this.pendingSends = [];
+            this.rejectUploadWaiter(message);
+            this.rejectDownloadWaiter(message);
+            if (this.visible) this.showError(message);
+          }
+        };
+
+        // P2P 'sftp' DataChannel 在工厂 resolve 时即已 open，不会触发 onopen
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.onopen?.({});
         }
-      };
-    });
+      });
+    })();
 
     try {
       await this.connectingPromise;

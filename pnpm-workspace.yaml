@@ -1,6 +1,7 @@
 packages:
   - '.'
   - 'frontend'
+  - 'agent'
 allowBuilds:
   esbuild: true
   sharp: true

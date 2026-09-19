@@ -1,3 +1,4 @@
+import { AgentManager } from './agent-manager';
 import { copyTextToClipboard } from './clipboard';
 import { maskIPAddress } from './host-display';
 import { onLocaleChange, t } from './i18n';
@@ -132,7 +133,9 @@ export class ServerList {
   private currentPage = 1;
   private pageSize = currentServerPageSize();
   private sharingEnabled = false;
+  private p2pEnabled = false;
   private readonly shareManager = new ShareManager();
+  private readonly agentManager = new AgentManager();
 
   constructor(
     user: UserInfo,
@@ -196,6 +199,11 @@ export class ServerList {
   private bindEvents(): void {
     // 退出登录
     document.getElementById('logout-btn')?.addEventListener('click', () => this.logout());
+
+    // Agent 管理按钮（P2P 开关启用时可见）
+    document
+      .getElementById('agents-btn')
+      ?.addEventListener('click', () => void this.agentManager.open());
 
     // 添加服务器按钮
     document
@@ -289,6 +297,11 @@ export class ServerList {
   private async fetchSharingConfig(): Promise<void> {
     const config = await getPublicConfig();
     this.sharingEnabled = config?.sshSharingEnabled === true;
+    this.p2pEnabled = config?.p2pEnabled === true;
+    // P2P 开关启用时展示 Agent 管理入口（按钮初始 hidden，防未配置环境误显）
+    if (this.p2pEnabled) {
+      document.getElementById('agents-btn')?.classList.remove('hidden');
+    }
   }
 
   // ==================== 渲染服务器卡片 ====================

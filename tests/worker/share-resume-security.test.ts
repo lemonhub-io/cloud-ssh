@@ -166,7 +166,7 @@ function createRegularSession(): { session: SSHSession; socket: { close: any } }
 
 function createDo(): { doInstance: SSHSessionDO; internal: any } {
   const mockState = {
-    storage: { sql: { exec: vi.fn() } },
+    storage: { sql: { exec: vi.fn() }, get: vi.fn(async () => undefined) },
     acceptWebSocket: vi.fn(),
     waitUntil: vi.fn(),
   };

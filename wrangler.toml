@@ -24,6 +24,12 @@ watch_dir = "."
 # - TURNSTILE_SECRET / TURNSTILE_SITEKEY（Bot 验证）
 # - BASE_URL（OAuth 回调地址，需与实际域名一致）
 # - IDLE_TIMEOUT（可选，用户无操作空闲超时，如 30m / 1h，设为 0 禁用，默认 30m）
+# - ENABLE_P2P（可选，true 时开放 Agent 注册/信令 API，登录用户可经
+#   自托管 Agent 以 WebRTC DataChannel 直连 SSH 主机；未启用时全部走中继）
+# - TURN_KEY_ID / TURN_API_TOKEN（可选，Cloudflare Realtime TURN key；
+#   缺失时 P2P 仅下发公共 STUN，对称 NAT/UDP 受限网络无法直连）
+# - TURN_EXTRA_URIS / TURN_EXTRA_USERNAME / TURN_EXTRA_CREDENTIAL（可选，
+#   逗号分隔的自建 TURN 地址与静态凭据，追加进 iceServers 作为回退候选）
 
 [[durable_objects.bindings]]
 name = "SSH_SESSION"

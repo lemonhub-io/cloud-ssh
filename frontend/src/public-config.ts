@@ -4,6 +4,7 @@ export interface PublicConfig {
   githubAuthEnabled: boolean;
   githubAuthRequired: boolean;
   sshSharingEnabled: boolean;
+  p2pEnabled?: boolean;
 }
 
 /**

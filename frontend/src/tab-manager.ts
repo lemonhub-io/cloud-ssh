@@ -124,7 +124,7 @@ export class TabManager {
 
         // 初始化 SFTP 面板
         if (!tab.sftpPanel) {
-          tab.sftpPanel = new SFTPPanel(() => tab.terminal.getSFTPWebSocketUrl());
+          tab.sftpPanel = new SFTPPanel(() => tab.terminal.openSFTPChannel());
           tab.sftpPanel.bindEvents();
         }
         tab.sftpPanel.handleSSHReady();

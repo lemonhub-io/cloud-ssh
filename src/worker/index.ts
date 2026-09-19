@@ -1,5 +1,7 @@
 import { normalizeThemeData, THEME_MAX_BYTES } from '../theme-schema';
+import { isValidAgentId } from '../p2p-signaling';
 import { ALLOWED_LOCATION_HINTS, type Env, type SSHConnectionConfig } from '../types';
+import { buildIceServers } from './turn-credentials';
 import {
   getAuthenticatedUser,
   handleGetMe,
@@ -147,6 +149,56 @@ function isSSHSharingEnabled(env: Env): boolean {
   return env.ENABLE_SSH_SHARING === 'true';
 }
 
+function isP2PEnabled(env: Env): boolean {
+  return env.ENABLE_P2P === 'true';
+}
+
+/** agent:<id> 命名的 SSHSessionDO 实例（与浏览器会话共用 DO 类）。 */
+function getAgentStub(env: Env, agentId: string): DurableObjectStub {
+  return env.SSH_SESSION.get(env.SSH_SESSION.idFromName(`agent:${agentId}`));
+}
+
+/** Agent 在线判定：agent:* DO 内持有存活信令 WS 即在线。 */
+async function isAgentOnline(env: Env, agentId: string): Promise<boolean> {
+  try {
+    const res = await getAgentStub(env, agentId).fetch(
+      new Request('http://internal/internal/agent-status')
+    );
+    if (!res.ok) return false;
+    const body = await res.json<{ online?: boolean }>();
+    return body.online === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 校验 Agent Token 并返回归属身份。
+ * Token 形态 <githubId>:<agentId>:<secret>：首段直接定位 UserDBDO，无需全局索引。
+ */
+async function validateAgentToken(
+  env: Env,
+  token: string
+): Promise<{ agentId: string; userId: number; githubId: string } | null> {
+  const [githubId, agentId] = token.split(':');
+  if (!githubId || !isValidAgentId(agentId)) return null;
+  try {
+    const res = await getUserDBStub(env, githubId).fetch(
+      new Request('http://internal/internal/agents/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      })
+    );
+    if (!res.ok) return null;
+    const body = await res.json<{ agentId?: string; userId?: number }>();
+    if (!body.agentId || typeof body.userId !== 'number') return null;
+    return { agentId: body.agentId, userId: body.userId, githubId };
+  } catch {
+    return null;
+  }
+}
+
 async function hashShareToken(token: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
   let binary = '';
@@ -229,6 +281,24 @@ export default {
         return handleSnippetsRoute(request, url, env);
       }
 
+      // ==================== Agent 管理（需认证，P2P 开关启用时可用） ====================
+
+      if (url.pathname === '/api/agents' || url.pathname.startsWith('/api/agents/')) {
+        return handleAgentsRoute(request, url, env);
+      }
+
+      // ==================== Agent 信令接入与回调（Bearer Token 认证） ====================
+
+      if (url.pathname === '/api/agent/ws') {
+        return handleAgentWebSocket(request, env);
+      }
+      if (url.pathname === '/internal/agent/audit' && request.method === 'POST') {
+        return handleAgentAudit(request, env);
+      }
+      if (url.pathname === '/internal/agent/os' && request.method === 'POST') {
+        return handleAgentOSReport(request, env);
+      }
+
       // ==================== Turnstile Verify ====================
 
       if (url.pathname === '/api/verify' && request.method === 'POST') {
@@ -295,6 +365,14 @@ export default {
           return handleShareSSHConnection(request, env, shareRef, shareTicket);
         }
 
+        // P2P 需要已保存服务器（凭据经服务端配置下发）或分享票据，匿名直连不可用
+        if (url.searchParams.get('mode') === 'p2p') {
+          return Response.json(
+            { error: 'P2P mode requires a saved server or share ticket' },
+            { status: 400 }
+          );
+        }
+
         // Verify Turnstile if secret is configured
         if (env.TURNSTILE_SECRET) {
           // Check if user has a valid verification cookie
@@ -339,6 +417,7 @@ export default {
           githubAuthEnabled: !!(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
           githubAuthRequired: isGitHubAuthRequired(env),
           sshSharingEnabled: isSSHSharingEnabled(env),
+          p2pEnabled: isP2PEnabled(env),
         });
       }
 
@@ -903,6 +982,14 @@ async function handleResumeSSHConnection(
   headers.set('x-cloudflare-colo', (request as any).cf?.colo || 'UNKNOWN');
   headers.delete('x-ssh-config');
 
+  // P2P 恢复轮：下发新的 ICE 配置（原 TURN 凭据可能已过期）
+  if (url.searchParams.get('mode') === 'p2p') {
+    if (!isP2PEnabled(env)) {
+      return Response.json({ error: 'P2P mode is disabled' }, { status: 404 });
+    }
+    headers.set('x-ice-servers', JSON.stringify(await buildIceServers(env)));
+  }
+
   return stub.fetch(new Request(doUrl.toString(), { headers }));
 }
 
@@ -1041,6 +1128,17 @@ async function handleShareSSHConnection(
     return Response.json({ error: 'Share owner is no longer allowed' }, { status: 403 });
   }
 
+  // P2P 分享：优先定位分享所有者的在线 Agent；无在线 Agent 时透明回退中继
+  if (url.searchParams.get('mode') === 'p2p' && isP2PEnabled(env)) {
+    const agentId = await findOnlineAgentForOwner(env, config);
+    if (agentId) {
+      if (typeof devicePubKey === 'string' && devicePubKey) {
+        config.sessionPolicy.devicePubKey = devicePubKey;
+      }
+      return forwardP2PSignalAttach(request, env, config, agentId, sessionName);
+    }
+  }
+
   const doId = env.SSH_SESSION.idFromName(sessionName);
   const hint = validateRegion(config.locationHint);
   const sessionStub = hint
@@ -1050,6 +1148,9 @@ async function handleShareSSHConnection(
   if (!doUrl) return Response.json({ error: 'Invalid request URL' }, { status: 400 });
   doUrl.searchParams.delete('share_ref');
   doUrl.searchParams.delete('share_ticket');
+  // Agent 离线时的透明中继回退：剥离 mode=p2p，前端 RtcTransport 检测到
+  // 非信令首帧后会把同一 WS 收养为普通中继传输（票据已消费，不能重试）。
+  doUrl.searchParams.delete('mode');
   doUrl.searchParams.set('session', sessionName);
   const headers = new Headers(request.headers);
   headers.set('x-cloudflare-colo', (request as any).cf?.colo || 'UNKNOWN');
@@ -1119,6 +1220,25 @@ async function handleTokenSSHConnection(
     );
   }
 
+  // P2P 模式：Agent 归属与在线校验通过后走信令挂载，由 DataChannel 承载会话
+  if (url.searchParams.get('mode') === 'p2p') {
+    if (!isP2PEnabled(env)) {
+      return Response.json({ error: 'P2P mode is disabled' }, { status: 404 });
+    }
+    const agentId = url.searchParams.get('agent_id') || '';
+    if (!isValidAgentId(agentId)) {
+      return Response.json({ error: 'Missing or invalid agent_id' }, { status: 400 });
+    }
+    const owned = await isAgentOwnedByUser(env, config, agentId);
+    if (!owned) {
+      return Response.json({ error: 'Agent not found' }, { status: 404 });
+    }
+    if (!(await isAgentOnline(env, agentId))) {
+      return Response.json({ error: 'Agent is offline', agentOffline: true }, { status: 409 });
+    }
+    return forwardP2PSignalAttach(request, env, config, agentId);
+  }
+
   const sessionName = `session:${Date.now()}:${crypto.randomUUID()}`;
   const doId = env.SSH_SESSION.idFromName(sessionName);
   // Token 路径：locationHint 由 user-db.handleConnectServer 按最外层直连节点计算并写入 config
@@ -1166,4 +1286,267 @@ async function handleSFTPAttachConnection(request: Request, env: Env): Promise<R
   const doId = env.SSH_SESSION.idFromName(sessionName);
   const stub = env.SSH_SESSION.get(doId);
   return stub.fetch(request);
+}
+
+// ==================== P2P：Agent 管理、信令接入与回调 ====================
+
+function bearerToken(request: Request): string | null {
+  const header = request.headers.get('Authorization') || '';
+  if (!header.startsWith('Bearer ')) return null;
+  const token = header.slice(7).trim();
+  return token || null;
+}
+
+/** Agent CRUD：登录用户代理到其 UserDBDO；仅 P2P 开关启用时开放。 */
+async function handleAgentsRoute(request: Request, url: URL, env: Env): Promise<Response> {
+  if (!isP2PEnabled(env)) {
+    return Response.json({ error: 'P2P mode is disabled' }, { status: 404 });
+  }
+  const user = await getAuthenticatedUser(request, env);
+  if (!user) {
+    return Response.json({ error: 'Authentication required' }, { status: 401 });
+  }
+  const stub = getUserDBStub(env, user.github_id);
+
+  if (url.pathname === '/api/agents') {
+    if (request.method === 'GET') {
+      return stub.fetch(
+        new Request(`http://internal/internal/agents?user_id=${user.id}`, { method: 'GET' })
+      );
+    }
+    if (request.method === 'POST') {
+      const body = await request.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+      body.user_id = user.id;
+      return stub.fetch(
+        new Request('http://internal/internal/agents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      );
+    }
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  const match = url.pathname.match(/^\/api\/agents\/([^/]+)$/);
+  if (match) {
+    const agentId = match[1];
+    if (!isValidAgentId(agentId)) {
+      return Response.json({ error: 'Invalid agent id' }, { status: 400 });
+    }
+    if (request.method === 'DELETE') {
+      return stub.fetch(
+        new Request(
+          `http://internal/internal/agents/${agentId}?user_id=${user.id}`,
+          { method: 'DELETE' }
+        )
+      );
+    }
+    return new Response('Method Not Allowed', { status: 405 });
+  }
+
+  return new Response('Not Found', { status: 404 });
+}
+
+/**
+ * Agent 常驻信令 WS：Bearer Token 认证 → 校验归属 → 以注入身份头的
+ * 合成升级请求挂载到 agent:<id> DO。无 Cookie/Origin 语义，不做同源检查。
+ */
+async function handleAgentWebSocket(request: Request, env: Env): Promise<Response> {
+  if (!isP2PEnabled(env)) {
+    return Response.json({ error: 'P2P mode is disabled' }, { status: 404 });
+  }
+  if (request.headers.get('Upgrade') !== 'websocket') {
+    return Response.json({ error: 'Expected WebSocket upgrade' }, { status: 426 });
+  }
+  const token = bearerToken(request);
+  if (!token) {
+    return Response.json({ error: 'Missing agent token' }, { status: 401 });
+  }
+  const identity = await validateAgentToken(env, token);
+  if (!identity) {
+    return Response.json({ error: 'Invalid agent token' }, { status: 403 });
+  }
+
+  const headers = new Headers();
+  headers.set('Upgrade', 'websocket');
+  headers.set('x-agent-id', identity.agentId);
+  headers.set('x-agent-user-id', String(identity.userId));
+  headers.set('x-agent-github-id', identity.githubId);
+  return getAgentStub(env, identity.agentId).fetch(
+    new Request('http://internal/api/agent/ws', { headers })
+  );
+}
+
+/**
+ * Agent 端分享审计回传：等价于 ShareAuditSink.appendEvent 的 HTTP 通道。
+ * 仅转发已认证 Agent 上报的事件；shareRef 定位 ShareDO（不可猜测的能力散列）。
+ */
+async function handleAgentAudit(request: Request, env: Env): Promise<Response> {
+  if (!isP2PEnabled(env)) {
+    return Response.json({ error: 'P2P mode is disabled' }, { status: 404 });
+  }
+  const token = bearerToken(request);
+  if (!token) return Response.json({ error: 'Missing agent token' }, { status: 401 });
+  const identity = await validateAgentToken(env, token);
+  if (!identity) return Response.json({ error: 'Invalid agent token' }, { status: 403 });
+
+  const body = await request
+    .json<{
+      shareRef?: string;
+      eventType?: string;
+      occurredAt?: number;
+      details?: Record<string, unknown>;
+      closed?: boolean;
+    }>()
+    .catch(() => null);
+  if (!body || typeof body.shareRef !== 'string' || !/^[A-Za-z0-9_-]{40,128}$/.test(body.shareRef)) {
+    return Response.json({ error: 'Invalid audit event' }, { status: 400 });
+  }
+  const shareStub = env.SSH_SHARE.get(env.SSH_SHARE.idFromName(body.shareRef));
+
+  // 会话关闭留痕（等价于 ShareAuditSink.notifyClosed 的 DO 直连路径）
+  if (typeof body.closed === 'boolean') {
+    return shareStub.fetch(
+      new Request('http://internal/internal/session/closed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ normal: body.closed }),
+      })
+    );
+  }
+
+  if (
+    typeof body.eventType !== 'string' ||
+    !/^[a-z_.]{1,64}$/.test(body.eventType) ||
+    typeof body.occurredAt !== 'number' ||
+    !Number.isFinite(body.occurredAt)
+  ) {
+    return Response.json({ error: 'Invalid audit event' }, { status: 400 });
+  }
+  if (JSON.stringify(body.details ?? {}).length > 64 * 1024) {
+    return Response.json({ error: 'Audit details too large' }, { status: 413 });
+  }
+
+  return shareStub.fetch(
+    new Request('http://internal/internal/audit/event', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        eventType: body.eventType,
+        occurredAt: body.occurredAt,
+        details: body.details ?? {},
+      }),
+    })
+  );
+}
+
+/**
+ * Agent 端 OS 检测回传：等价于 detectAndPersistRemoteOS 的 USER_DB 直连路径。
+ * 归属校验在 UserDBDO 内完成（server_id 必须属于该用户）。
+ */
+async function handleAgentOSReport(request: Request, env: Env): Promise<Response> {
+  if (!isP2PEnabled(env)) {
+    return Response.json({ error: 'P2P mode is disabled' }, { status: 404 });
+  }
+  const token = bearerToken(request);
+  if (!token) return Response.json({ error: 'Missing agent token' }, { status: 401 });
+  const identity = await validateAgentToken(env, token);
+  if (!identity) return Response.json({ error: 'Invalid agent token' }, { status: 403 });
+
+  const body = await request
+    .json<{ serverId?: number; os?: string }>()
+    .catch(() => null);
+  if (!body || !Number.isInteger(body.serverId) || typeof body.os !== 'string') {
+    return Response.json({ error: 'Invalid OS report' }, { status: 400 });
+  }
+
+  return getUserDBStub(env, identity.githubId).fetch(
+    new Request(`http://internal/internal/servers/${body.serverId}/os`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: identity.userId, os: body.os }),
+    })
+  );
+}
+
+/** Agent 归属校验：agent_id 必须登记在会话配置所属用户名下。 */
+async function isAgentOwnedByUser(
+  env: Env,
+  config: SSHConnectionConfig,
+  agentId: string
+): Promise<boolean> {
+  if (!config.githubId || !config.userId) return false;
+  try {
+    const res = await getUserDBStub(env, config.githubId).fetch(
+      new Request(
+        `http://internal/internal/agents/${agentId}?user_id=${config.userId}`,
+        { method: 'GET' }
+      )
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** 为分享会话在所有者名下挑选一个在线 Agent（last_seen 近者优先）。 */
+async function findOnlineAgentForOwner(
+  env: Env,
+  config: SSHConnectionConfig
+): Promise<string | null> {
+  if (!config.githubId || !config.userId) return null;
+  try {
+    const res = await getUserDBStub(env, config.githubId).fetch(
+      new Request(`http://internal/internal/agents?user_id=${config.userId}`, {
+        method: 'GET',
+      })
+    );
+    if (!res.ok) return null;
+    const body = await res.json<{ agents?: Array<{ id: string; last_seen_at?: number }> }>();
+    const agents = (body.agents ?? [])
+      .slice()
+      .sort((a, b) => (b.last_seen_at ?? 0) - (a.last_seen_at ?? 0));
+    for (const agent of agents) {
+      if (await isAgentOnline(env, agent.id)) return agent.id;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 将浏览器 WS 升级为 P2P 信令通道：session:* DO 进入信令模式，
+ * 连接配置、目标 Agent 与本轮 ICE 服务器经内部头注入。
+ */
+async function forwardP2PSignalAttach(
+  request: Request,
+  env: Env,
+  config: SSHConnectionConfig,
+  agentId: string,
+  sessionName?: string
+): Promise<Response> {
+  const name = sessionName ?? `session:${Date.now()}:${crypto.randomUUID()}`;
+  const doId = env.SSH_SESSION.idFromName(name);
+  const hint = validateRegion(config.locationHint);
+  const stub = hint
+    ? env.SSH_SESSION.get(doId, { locationHint: hint } as any)
+    : env.SSH_SESSION.get(doId);
+
+  const doUrl = parseRequestUrl(request.url);
+  if (!doUrl) return Response.json({ error: 'Invalid request URL' }, { status: 400 });
+  doUrl.searchParams.delete('token');
+  doUrl.searchParams.delete('share_ref');
+  doUrl.searchParams.delete('share_ticket');
+  doUrl.searchParams.set('session', name);
+  doUrl.searchParams.set('mode', 'p2p');
+
+  const headers = new Headers(request.headers);
+  headers.set('x-cloudflare-colo', (request as any).cf?.colo || 'UNKNOWN');
+  headers.set('x-ssh-config', encodeURIComponent(JSON.stringify(config)));
+  headers.set('x-agent-id', agentId);
+  headers.set('x-ice-servers', JSON.stringify(await buildIceServers(env)));
+
+  return stub.fetch(new Request(doUrl.toString(), { headers }));
 }

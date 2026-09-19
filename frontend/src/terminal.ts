@@ -24,6 +24,12 @@ import {
   type MobileTerminalKey,
   mobileTerminalKeySequence,
 } from './mobile-input';
+import {
+  RtcTransport,
+  RTC_SFTP_SCHEME,
+  type SessionCloseInfo,
+  type SessionTransportLike,
+} from './session-transport';
 import { currentTerminalFontSize } from './terminal-layout';
 import { localizedSSHMessage } from './terminal-status';
 import { centerTerminalText } from './terminal-text';
@@ -54,7 +60,9 @@ export interface SSHHostInfo {
   serverId?: number;
 }
 
-export type ReconnectWebSocketFactory = () => Promise<WebSocket>;
+export type ReconnectWebSocketFactory = () =>
+  | Promise<SessionTransportLike>
+  | SessionTransportLike;
 
 export interface SSHConnectionConfig {
   host: string;
@@ -135,7 +143,9 @@ export class SSHTerminal {
   private fitAddon: FitAddon;
   private webglAddon!: WebglAddon;
   private searchAddon: SearchAddon;
-  private ws: WebSocket | null = null;
+  private ws: SessionTransportLike | null = null;
+  /** 连接代际：resetActiveConnection 递增；异步信令完成后校验，丢弃迟到传输。 */
+  private connectionEpoch = 0;
   private authChallengeDialog: AuthChallengeDialog | null = null;
   private container: HTMLElement;
   private disposables: { dispose(): void }[] = [];
@@ -152,7 +162,7 @@ export class SSHTerminal {
   private canReconnect: boolean = true;
   private sessionReady: boolean = false;
   private restoreCursorBlinkAfterReturnPrompt: boolean = false;
-  private onSessionClosed?: (event: CloseEvent, willReconnect: boolean) => void;
+  private onSessionClosed?: (event: SessionCloseInfo, willReconnect: boolean) => void;
   private onSessionReady?: () => void;
   private onOSDetectedHandler?: (serverId: number, os: string) => void;
   private sftpAttachUrl: string | null = null;
@@ -183,7 +193,9 @@ export class SSHTerminal {
   private imeKeyupTimer: ReturnType<typeof setTimeout> | null = null;
   private viewportRestoreFrame: number | null = null;
   private readonly mobileConnectionRecoveryEnabled: boolean;
-  private pendingHostKeyChangeSocket: WebSocket | null = null;
+  private pendingHostKeyChangeSocket: SessionTransportLike | null = null;
+  /** 当前会话走 WebRTC DataChannel（P2P）还是 Worker 中继 WebSocket。 */
+  private isP2PConnection = false;
   private activeSessionId: string | null = null;
   private activeResumeToken: string | null = null;
   /** 分享会话专用：断线后只走秒级恢复路径，失败则宣告分享结束。 */
@@ -373,7 +385,9 @@ export class SSHTerminal {
     });
   }
 
-  setSessionClosedHandler(handler: (event: CloseEvent, willReconnect: boolean) => void): void {
+  setSessionClosedHandler(
+    handler: (event: SessionCloseInfo, willReconnect: boolean) => void
+  ): void {
     this.onSessionClosed = handler;
   }
 
@@ -513,6 +527,24 @@ export class SSHTerminal {
 
   getSFTPWebSocketUrl(): string | null {
     return this.sftpAttachUrl;
+  }
+
+  /**
+   * 打开 SFTP 数据通道：P2P 会话在既有 PeerConnection 上开 'sftp'
+   * DataChannel；中继会话另起一条 /api/ssh/sftp WebSocket。
+   * 返回 null 表示 sftp_attach 尚未到达（含分享 allowSftp 策略关闭情形）。
+   */
+  openSFTPChannel(): SessionTransportLike | Promise<SessionTransportLike> | null {
+    const ws = this.ws;
+    if (ws instanceof RtcTransport) {
+      if (!this.sftpAttachUrl?.startsWith(RTC_SFTP_SCHEME)) return null;
+      return ws.openSFTPChannel();
+    }
+    const url = this.sftpAttachUrl;
+    if (!url) return null;
+    const socket = new WebSocket(url);
+    socket.binaryType = 'arraybuffer';
+    return socket;
   }
 
   private getTerminalCell(clientX: number, clientY: number): TerminalCell | null {
@@ -803,7 +835,10 @@ export class SSHTerminal {
     }
   }
 
-  private async handleChangedHostKey(socket: WebSocket, message: unknown): Promise<void> {
+  private async handleChangedHostKey(
+    socket: SessionTransportLike,
+    message: unknown
+  ): Promise<void> {
     const hostKey = normalizeChangedHostKeyMessage(message);
     if (!hostKey || this.pendingHostKeyChangeSocket) return;
 
@@ -943,7 +978,7 @@ export class SSHTerminal {
         resolve();
       };
 
-      this.ws.onerror = () => {
+      socket.onerror = () => {
         reject(new Error(t('terminal.wsFailed')));
       };
 
@@ -952,7 +987,7 @@ export class SSHTerminal {
   }
 
   connectWithWebSocket(
-    ws: WebSocket,
+    ws: SessionTransportLike,
     hostInfo?: SSHHostInfo,
     options: WebSocketConnectOptions = {}
   ): void {
@@ -966,6 +1001,7 @@ export class SSHTerminal {
     this.sessionRequiresDeviceSig = false;
     this.canReconnect = Boolean(this.reconnectWebSocketFactory);
     this.sessionReady = false;
+    this.isP2PConnection = ws instanceof RtcTransport;
     this.ws = ws;
     ws.binaryType = 'arraybuffer';
     if (options.resetDisplay !== false) {
@@ -1140,7 +1176,9 @@ export class SSHTerminal {
           }
         }
       } else {
-        this.trzszFilter!.processServerOutput(event.data);
+        this.trzszFilter!.processServerOutput(
+          event.data as string | ArrayBuffer | Uint8Array | Blob
+        );
       }
     };
 
@@ -1214,7 +1252,7 @@ export class SSHTerminal {
     );
   }
 
-  private handleAuthChallenge(socket: WebSocket, payload: unknown): void {
+  private handleAuthChallenge(socket: SessionTransportLike, payload: unknown): void {
     if (socket !== this.ws) return;
 
     const challengeTarget =
@@ -1259,7 +1297,7 @@ export class SSHTerminal {
     }
   }
 
-  private rejectAuthChallenge(socket: WebSocket, payload: unknown): void {
+  private rejectAuthChallenge(socket: SessionTransportLike, payload: unknown): void {
     if (socket !== this.ws) return;
     this.canReconnect = false;
     this.clearReconnectTimeout();
@@ -1453,7 +1491,7 @@ export class SSHTerminal {
     }
   }
 
-  private recoverUnresponsiveConnection(socket: WebSocket): void {
+  private recoverUnresponsiveConnection(socket: SessionTransportLike): void {
     if (socket !== this.ws) return;
     this.terminal.writeln(`\x1b[31m[!] ${t('terminal.resumeStale')}\x1b[0m`);
     const event = new CloseEvent('close', {
@@ -1546,6 +1584,7 @@ export class SSHTerminal {
   }
 
   private resetActiveConnection(): void {
+    this.connectionEpoch++;
     this.authChallengeDialog?.dismiss();
     this.stopHeartbeat();
     this.clearReconnectTimeout();
@@ -1610,12 +1649,29 @@ export class SSHTerminal {
         params.set('did_sig', challenge.signature);
       }
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const socket = new WebSocket(
-        `${protocol}//${window.location.host}/api/ssh?${params.toString()}`
-      );
-      socket.binaryType = 'arraybuffer';
+      const wsUrl = `${protocol}//${window.location.host}/api/ssh?${params.toString()}`;
       this.resetActiveConnection();
-      this.ws = socket;
+      const epoch = this.connectionEpoch;
+      // P2P 会话的恢复走信令通道（DO 将 session_resume 连同新 ICE 配置转给
+      // Agent 重建 DataChannel）；中继会话直接重挂 WebSocket。
+      const transport = this.isP2PConnection
+        ? await RtcTransport.connect(`${wsUrl}&mode=p2p`)
+        : (() => {
+            const socket = new WebSocket(wsUrl);
+            socket.binaryType = 'arraybuffer';
+            return socket;
+          })();
+      if (epoch !== this.connectionEpoch) {
+        // 信令期间用户已发起新连接或断开：丢弃迟到传输，避免覆盖新会话
+        try {
+          transport.close(1000);
+        } catch {
+          /* ignore */
+        }
+        return true;
+      }
+      this.ws = transport;
+      this.isP2PConnection = transport instanceof RtcTransport;
       this.setupWebSocketHandlers();
       return true;
     } catch {

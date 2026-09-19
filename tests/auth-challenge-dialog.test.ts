@@ -112,7 +112,7 @@ describe('keyboard-interactive 浏览器交互边界', () => {
     expect(dialogSource).toContain('dialog.remove()');
     expect(dialogSource).toContain('if (this.dialog !== expectedDialog) return;');
     expect(terminalSource).toMatch(/onclose = \(event\) => \{[\s\S]*?authChallengeDialog\?\.dismiss\(\)/);
-    expect(terminalSource).toMatch(/resetActiveConnection\(\): void \{\s*this\.authChallengeDialog\?\.dismiss\(\)/);
+    expect(terminalSource).toMatch(/resetActiveConnection\(\): void \{[\s\S]*?this\.authChallengeDialog\?\.dismiss\(\)/);
     expect(terminalSource).toContain('this.authChallengeDialog?.destroy()');
   });
 

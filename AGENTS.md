@@ -12,12 +12,13 @@
 
 ## Project Overview
 
-CloudSSH is a serverless Web SSH terminal built on Cloudflare Workers. Users connect to SSH servers through a browser-based terminal UI with integrated SFTP file management.
+CloudSSH is a serverless Web SSH terminal built on Cloudflare Workers. Users connect to SSH servers through a browser-based terminal UI with integrated SFTP file management. Signed-in users can additionally route sessions through an optional self-hosted **P2P Agent** (`agent/`): the browser talks WebRTC DataChannel to the agent, the agent opens the TCP connection to sshd, and Cloudflare only carries signaling/metadata.
 
 ## Architecture
 
 - **Frontend** (`frontend/`): TypeScript + Vite + xterm.js + Tailwind CSS（通过 PostCSS 本地构建）
 - **Backend** (`src/`): Cloudflare Workers + Durable Objects
+- **Agent** (`agent/`): Node.js + `werift` WebRTC gateway; reuses `src/ssh/*` 与 `src/worker/ssh-session.ts`，`net.Socket`/`RTCDataChannel` 适配器替代 CF sockets/WebSocket
 - **SSH Protocol**: Pure TypeScript implementation in `src/ssh/` (no external SSH library)
 - **SFTP Protocol**: SFTP v3 subsystem implementation in `src/ssh/sftp.ts` for file management
 - **Build Process**: `scripts/build-html.js` builds frontend and inlines it into `src/worker/html.ts`
@@ -43,6 +44,7 @@ src/
 │   ├── auth.ts       # GitHub OAuth handling
 │   ├── dns-check.ts  # DNS-over-HTTPS 解析 + 统一 IP 块检查（DNS rebinding 防重绑定 SSRF 防护）
 │   ├── ip-geo.ts     # 保存直连服务器时 IPinfo 区域推断，映射为 DO locationHint
+│   ├── turn-credentials.ts # Cloudflare Realtime TURN 短时 ICE 凭据签发（+自建 TURN 追加项）
 │   ├── exec-channel.ts  # SSH exec channel 生命周期与有界输出捕获（OS 检测等只读命令复用）
 │   └── html.ts       # Auto-generated - DO NOT EDIT
 ├── ssh/              # SSH protocol implementation
@@ -61,6 +63,9 @@ src/
 │   └── sftp-types.ts # SFTP protocol constants and types
 ├── theme-schema.ts   # Theme V4 shared validation（外观/背景/效果/版式模块、白名单与读性遮罩下限）
 ├── snippet-schema.ts # Command snippet shared validation, limits, and normalization (UserDBDO + localStorage)
+├── share-resume-schema.ts # 分享会话设备绑定恢复挑战的消息规范与常量（Worker/Agent/前端三方共享）
+├── session-channel.ts # SessionChannel 抽象（send/close/readyState）：SSHSession 消费的最小通道形状
+├── p2p-signaling.ts  # P2P 信令协议 v1：浏览器⇄DO⇄Agent 三向消息契约 + 全部校验器
 └── types.ts          # Shared TypeScript type definitions
 
 frontend/
@@ -95,6 +100,10 @@ frontend/
 │   ├── server-list.ts     # Server UI (tags, search, responsive 9/6/3-card pagination, CRUD/connect/duplicate)
 │   ├── share-manager.ts   # Owner UI for creating, revoking, and auditing one-time shares
 │   ├── share-session.ts   # Public one-time share landing and claim flow
+│   ├── session-transport.ts # 会话传输抽象（SessionTransportLike）：RtcTransport 信令/数据通道、
+│   │                        #   DataChannelTransport、AdoptedRelayTransport（一次性票据透明降级复用同一 WS）
+│   ├── agent-manager.ts   # Agent 偏好（连接方式选择）+ Agent 管理面板（创建/复制令牌/删除）
+│   ├── public-config.ts   # /api/config 单例缓存（含 p2pEnabled 能力位）
 │   ├── snippet-manager.ts # 命令片段库面板（云端/本地双后端、参数占位符录入、搜索/复制、填入/填入并执行、编辑/删除）
 │   ├── snippet-variables.ts # 命令片段 {{var}} 参数占位符提取与安全替换纯函数
 │   ├── snippet-store.ts   # 片段存储层（RemoteSnippetStore + LocalSnippetStore + 错误映射）
@@ -104,6 +113,19 @@ frontend/
 │   ├── style.css           # Global styles (CSS variable theme system)
 │   └── turnstile.d.ts      # Turnstile type declarations
 └── vite.config.ts          # Dev proxy to localhost:8787（+ esbuild minifySyntax 关闭以规避 xterm 6 DECRQM bug）
+
+agent/                    # P2P Agent（pnpm workspace 成员，独立 tsconfig 与构建）
+├── src/
+│   ├── cli.ts           # CLI 入口：参数解析 + SIGINT/SIGTERM 优雅退出
+│   ├── config.ts        # 运行配置（token 三段解析、allowlist、maxSessions）+ isHostAllowed 通配
+│   ├── log.ts           # 轻量分级日志
+│   ├── net-socket.ts    # net.Socket → { readable, writable, opened, close } 适配（同 CF socket 形状）
+│   ├── dc-channel.ts    # RTCDataChannel → SessionChannel 适配（send 窄化为 Buffer|string）
+│   ├── session-runner.ts # 会话编排：session_init/resume、PC 生命周期、SSHSession 构建、
+│   │                     #   allowlist/端口黑名单/上限校验、断线宽限与 token 轮换、设备签名验签
+│   ├── signal-client.ts # 信令 WS 客户端（指数退避重连、心跳、hello 握手）
+│   └── callbacks.ts     # Agent→Worker 回传：分享审计 /internal/agent/audit、OS 持久化
+└── tests/               # 适配器与 werift loopback 测试（根 vitest 统一收集）
 ```
 
 tests/
@@ -181,10 +203,12 @@ Three Durable Objects handle state:
    - Manages WebSocket ↔ TCP socket connections
    - Handles SSH session lifecycle
    - Accepts browser WebSockets through the Hibernation API, but active outbound SSH TCP sockets keep the DO awake and prevent hibernation during a live session
+   - **P2P signaling mode**: `mode=p2p` upgrades skip TCP setup and park the WS as a signaling channel; the same DO class also hosts `agent:<agentId>` instances holding agents' persistent signaling WS. Session DOs relay SDP/ICE to agent DOs via `/internal/deliver` stub fetches; after `rtc_ready` both WSes drop and the DOs idle-die, so a live P2P session costs ~zero DO time
 
 2. **UserDBDO** (`src/worker/user-db.ts`)
    - SQLite-based user and server storage
    - GitHub OAuth user management
+   - `agents` table (SCHEMA_VERSION=2): P2P agent registry — token plaintext is never stored (SHA-256 hash only), `<githubId>:<agentId>:<secret>` format lets the Worker route token validation to the owner's DO instance without a global scan
 
 3. **SSHShareDO** (`src/worker/share-do.ts`)
    - Owns one random capability's one-time claim, short-lived connection ticket, expiry, and revocation state
@@ -204,6 +228,7 @@ Three Durable Objects handle state:
 - **认证模式说明**：每个已认证 API 请求 = 2 次 DO 调用（`session/verify` + 业务操作，同一 UserDBDO 实例）。将校验下沉进内部路由可减半请求数，但需把 `x-session-token` 校验契约铺到全部内部路由，仅在有明确规模需求时再做。
 - **`/api/config` 经 `public-config.ts` 单例缓存**：同页多次调用只发一次请求；新增消费方复用该函数，勿直接 `fetch('/api/config')`。
 - 次要约束：`PBKDF2(100k)` 凭据派生仅在连接时执行（列表查询不取 credential 列），勿把 credential 加回列表 SELECT；`derivedKeyCache`/`connectTokens` 为内存态，随休眠丢失，属有意设计。
+- **P2P 信令 DO 的计费优势**：`mode=p2p` 会话 DO 只转发 SDP/ICE 等数十条小消息，`rtc_ready` 后两侧 WS 断开、DO 空闲死亡；agent 常驻信令 WS 所在 DO 仅靠应用层心跳保活（**该心跳走 WebSocket 应用消息而非 setWebSocketAutoResponse**，原因同第 199 行——边缘自动应答不产生 DO 事件）。会话 wall-time 成本随数据面移至 Agent 而消失，这是 P2P 模式的核心收益，勿把会话流量引回 DO。
 
 ## Environment Variables
 
@@ -213,6 +238,9 @@ Required for optional features (configured in `wrangler.toml` or Cloudflare Dash
 - `GITHUB_ALLOWED_USER_IDS` - Optional comma-separated numeric GitHub user ID allowlist; omitted means unrestricted GitHub login
 - `REQUIRE_GITHUB_AUTH` - Optional; `true` disables anonymous SSH and requires a valid GitHub session
 - `ENABLE_SSH_SHARING` - Optional; `true` enables one-time audited SSH sharing for signed-in owners (disabled by default)
+- `ENABLE_P2P` - Optional; `true` opens agent registry + signaling APIs (`/api/agents`, `/api/agent/ws`) and the `p2pEnabled` flag in `/api/config`
+- `TURN_KEY_ID` / `TURN_API_TOKEN` - Optional; Cloudflare Realtime TURN key for per-session short-lived ICE credentials (absent → public STUN only)
+- `TURN_EXTRA_URIS` / `TURN_EXTRA_USERNAME` / `TURN_EXTRA_CREDENTIAL` - Optional; comma-separated self-hosted TURN URIs + static credentials appended to `iceServers`
 - `TURNSTILE_SECRET` / `TURNSTILE_SITEKEY` - Bot verification
 - `BASE_URL` - OAuth callback URL
 - `STRICT_HOST_KEY_VERIFY` - Optional; `false` skips host-key signature verification failures (default true, fails closed)
@@ -246,11 +274,16 @@ Required for optional features (configured in `wrangler.toml` or Cloudflare Dash
 | `/api/known-hosts` | GET/POST/DELETE | Yes | Known host fingerprint CRUD (TOFU) |
 | `/api/snippets` | GET/POST | Yes | List or create command snippets (per-user, max 100) |
 | `/api/snippets/:id` | PUT/DELETE | Yes | Update or delete a command snippet (ownership scoped by user_id) |
+| `/api/agents` | GET/POST | Yes | List agents or create one (per-user max 10; plaintext token returned once) |
+| `/api/agents/:id` | GET/DELETE | Yes | Read or delete an owned agent |
+| `/api/agent/ws` | WebSocket | Token | Agent signaling WS attach (token `<githubId>:<agentId>:<secret>` via `Authorization: Bearer` or `token` param) |
+| `/internal/agent/audit` | POST | Token | Agent → ShareDO audit + session-close forwarding (`/internal/session/closed`) |
+| `/internal/agent/os` | POST | Token | Agent → UserDBDO OS-detection result persistence |
 | `/api/verify` | POST | No | Turnstile bot verification |
-| `/api/ssh` | WebSocket | Conditional | SSH terminal WebSocket connection |
+| `/api/ssh` | WebSocket | Conditional | SSH terminal WebSocket connection (`mode=p2p` upgrades to signaling when agent online) |
 | `/api/ssh/sftp` | WebSocket | Token | SFTP data WebSocket (attaches to existing session) |
 | `/api/health` | GET | No | Health check |
-| `/api/config` | GET | No | Feature flags (turnstile, GitHub auth enabled) |
+| `/api/config` | GET | No | Feature flags (turnstile, GitHub auth, `p2pEnabled`) |
 
 ## Testing
 
@@ -263,7 +296,7 @@ pnpm run test:e2e    # Playwright 浏览器 E2E 与 axe 无障碍检查
 pnpm run verify      # typecheck + test + build:frontend + test:e2e 完整门禁
 ```
 
-- 测试文件位于 `tests/` 目录，`.test.ts` 后缀（详见 Key Directories 中的 `tests/` 结构）。
+- 测试文件位于 `tests/` 与 `agent/tests/` 目录，`.test.ts` 后缀（详见 Key Directories 中的 `tests/` 结构）；根 vitest 统一收集。
 - `tests/ssh/fixtures/` 中的私钥只用于公开协议测试，绝不可用于真实服务器。
 - E2E 首次运行需安装浏览器：`pnpm exec playwright install chromium`。
 - 新增前端文案必须同时提供 zh-CN/en-US 词条，`i18n.test.ts` 会校验两端词条对齐。
@@ -346,6 +379,8 @@ ci: CI/CD 变更
 
 31. **用户无操作空闲超时（Inactivity Timeout）** - 为避免挂机会话长时间消耗 Cloudflare Durable Object 的 Duration 每日配额（Free 套餐 13,000 GB-s），`SSHSession` 实现了用户级空闲超时机制，由 `env.IDLE_TIMEOUT` 配置（支持如 `30m`/`1h`，默认 30 分钟，`0` 禁用）。仅真实用户交互（终端键盘输入、窗口 resize、SFTP 文件传输等）会刷新活动时间戳；前端 WebSocket ping 心跳、底层 SSH keepalive 以及远端服务器被动输出（如 `top` 刷屏）绝不重置该计时器。超时后服务端主动以 `session_idle_timeout` 关闭连接（code 1000），前端识别该事件并阻止自动重连。
 
+32. **P2P Agent 通道不变量** - `SSHSession` 只消费 `SessionChannel`（`src/session-channel.ts`：send/close/readyState），Worker 侧由 WebSocket、Agent 侧由 `DataChannelSessionChannel` 满足；新增面向浏览器的会话消息不得假设底层是 WebSocket。信令消息全部经 `src/p2p-signaling.ts` 校验器白名单化（三向各一：browser/agent/to-agent），未过校验一律丢弃。一次性凭据（connect token、share ticket）在进入 P2P 分支前即被消费，**不可二次使用**：分享路径的 Agent 离线/信令失败只能做透明降级——Worker 在转发到 relay DO 前剔除 `mode` 参数，前端 `RtcTransport` 识别首帧非信令消息时把同一 WS 收养为普通中继（`AdoptedRelayTransport`）；saved-server 路径失败必须经 `/api/servers/:id/connect` 重新申请 URL。P2P resume 复用 `/api/ssh?mode=p2p&resume=...`，DO 恢复信令上下文后下发 `session_resume`，Agent 校验当前/上一代 token + 设备签名挑战（分享会话）后轮换 token、重发 ICE 配置——恢复轮的新 TURN 凭据在 `session_resume.iceServers` 下发。Agent 侧 `BLOCKED_PORTS`/`MAX_JUMP_HOSTS` 与 Worker 口径保持一致，allowlist 覆盖全部跳板节点。
+
 ## Deployment Notes
 
 ### 双环境部署
@@ -388,10 +423,7 @@ pnpm run deploy:test     # 部署 test 环境
 
 ### 自定义域名
 
-`wrangler.toml` 中不硬编码自定义域名（开源项目，每人域名不同）。默认使用 Cloudflare 提供的 `workers.dev` 域名。如需绑定自定义域名：
-
-- 在 Cloudflare Dashboard → Workers → 你的 Worker → Settings → Domains & Routes 中添加
-- 或在 `wrangler.toml` 中添加 `[[routes]]` 配置（仅本地使用，勿提交到仓库）
+本仓库 `wrangler.toml` 已通过 `routes` 声明 Workers Custom Domain `ssh.lemonhub.online`（该部署实例的域名；Fork/自部署者应删除或改为自己的域名）。自定义域名由 Cloudflare 自动签发证书并创建 DNS，且在 workers.dev 被 SNI 阻断的网络中仍可达。也可在 Dashboard → Workers → Settings → Domains & Routes 手动绑定。
 
 ### Secrets 配置
 
@@ -401,6 +433,9 @@ pnpm run deploy:test     # 部署 test 环境
 - `GITHUB_ALLOWED_USER_IDS` - 可选，逗号分隔的 GitHub 数字用户 ID 白名单
 - `REQUIRE_GITHUB_AUTH` - 可选，设为 `true` 时禁用匿名 SSH 并要求有效 GitHub session
 - `ENABLE_SSH_SHARING` - 可选，设为 `true` 时允许登录用户创建一次性、受审计的 SSH 分享（默认关闭）
+- `ENABLE_P2P` - 可选，设为 `true` 时开放 Agent 注册/信令 API 与 `/api/config` 的 `p2pEnabled`（默认关闭）
+- `TURN_KEY_ID` / `TURN_API_TOKEN` - 可选，Cloudflare Realtime TURN key（P2P 推荐）
+- `TURN_EXTRA_URIS` / `TURN_EXTRA_USERNAME` / `TURN_EXTRA_CREDENTIAL` - 可选，自建 TURN 追加项
 - `TURNSTILE_SECRET` / `TURNSTILE_SITEKEY` - Bot 验证
 - `BASE_URL` - OAuth 回调地址（需与实际域名一致）
 

@@ -9,6 +9,15 @@ import {
   buildResumeChallengeMessage,
   RESUME_CHALLENGE_MAX_CLOCK_SKEW_MS,
 } from '../share-resume-schema';
+import {
+  isSignalSizeOk,
+  isValidSessionName,
+  P2P_PROTO_VERSION,
+  parseAgentSignal,
+  parseBrowserSignal,
+  parseIceServers,
+  type RTCIceServerSpec,
+} from '../p2p-signaling';
 import { checkHostResolved } from './dns-check';
 import { SSHSession } from './ssh-session';
 
@@ -61,6 +70,38 @@ interface DetachedSessionRecord {
   previousResumeToken?: string;
 }
 
+/** WebSocket attachment 角色标记：P2P 信令 WS 与中继会话 WS 共存于同一 DO 类。 */
+type WsRole = 'signal' | 'agent';
+
+interface SignalContext {
+  sessionName: string;
+  agentId: string;
+  /** 分享会话的 shareId：撤销时需要跨休眠定位并通知 Agent 终结会话。 */
+  shareId?: string;
+  /** 新建会话的连接配置（resume 轮不需要）。 */
+  config?: SSHConnectionConfig;
+  /** resume 轮的凭据与设备验签参数（透传 Agent 校验）。 */
+  resume?: {
+    resumeToken: string;
+    cols?: number;
+    rows?: number;
+    didNonce?: string;
+    didTs?: number;
+    didSig?: string;
+  };
+  iceServers: RTCIceServerSpec[];
+  /** rtc_ready 已达成：浏览器信令 WS 已按设计关闭。 */
+  ready: boolean;
+  readyTimeout?: ReturnType<typeof setTimeout>;
+}
+
+/** P2P 信令超时：offer 发出后未在窗口内 ready 即宣告失败，前端回退中继。 */
+const SIGNAL_READY_TIMEOUT_MS = 15_000;
+/** Agent 心跳写库最小间隔：WS 存活即可证明在线，DB 写入只做粗粒度记录。 */
+const AGENT_HEARTBEAT_MIN_INTERVAL_MS = 60_000;
+/** session DO 中记录 P2P 会话路由信息的存储键（供休眠后恢复/撤销查找）。 */
+const SIGNAL_STORAGE_KEY = 'p2p_signal';
+
 function base64UrlDecode(value: string): Uint8Array {
   const b64 = value.replace(/-/g, '+').replace(/_/g, '/');
   const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
@@ -99,6 +140,14 @@ export class SSHSessionDO {
   private sessionBaselines: Map<SSHSession, { latencyMs: number; colo: string }> = new Map();
   /** 上一代 resume token：容忍轮换帧在弱网下丢失后的客户端重试。 */
   private sessionToPrevResumeToken: Map<SSHSession, string> = new Map();
+  // ---- P2P 信令角色状态（同一 DO 类承担 session:* 与 agent:* 两种命名实例） ----
+  /** agent:* 实例：Agent 常驻信令 WS（每实例至多一条）。 */
+  private agentWs: WebSocket | null = null;
+  private agentMeta: { agentId: string; userId: number; githubId: string } | null = null;
+  private lastAgentHeartbeatAt = 0;
+  /** session:* 实例：P2P 信令期的浏览器 WS 与路由上下文。 */
+  private signalWs: WebSocket | null = null;
+  private signalContext: SignalContext | null = null;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -133,7 +182,35 @@ export class SSHSessionDO {
         revoked = true;
         this.destroyDetachedRecord(sessionId, record);
       }
+      // P2P 分享会话：信令存档中记录了 shareId→agentId 路由，通知 Agent 终结
+      const stored = (await this.state.storage.get(SIGNAL_STORAGE_KEY)) as
+        | { agentId?: string; shareId?: string | null }
+        | undefined;
+      const activeShareId = this.signalContext?.shareId ?? stored?.shareId;
+      const activeAgentId = this.signalContext?.agentId ?? stored?.agentId;
+      if (activeShareId && activeShareId === body.shareId && activeAgentId) {
+        revoked = true;
+        const sessionName = this.signalContext?.sessionName;
+        if (sessionName) {
+          void this.deliverToAgent(activeAgentId, [
+            { type: 'session_close', session: sessionName, reason: 'revoked' },
+          ]);
+        }
+        await this.clearSignalContext();
+      }
       return Response.json({ success: true, revoked });
+    }
+
+    // ---- P2P 信令内部路由（DO↔DO / Worker→DO，非公开路径） ----
+    if (url.pathname === '/internal/deliver' && request.method === 'POST') {
+      return this.handleInternalDeliver(request);
+    }
+    if (url.pathname === '/internal/agent-status' && request.method === 'GET') {
+      return Response.json({ online: this.findWsByRole('agent') !== null });
+    }
+    if (url.pathname === '/internal/signal-ended' && request.method === 'POST') {
+      await this.clearSignalContext();
+      return Response.json({ success: true });
     }
 
     const upgradeHeader = request.headers.get('Upgrade');
@@ -145,11 +222,26 @@ export class SSHSessionDO {
       return this.handleSFTPAttach(request, url);
     }
 
+    // Agent 常驻信令 WS（Worker 已完成 token 校验并注入身份头）
+    const agentIdHeader = request.headers.get('x-agent-id');
+    if (agentIdHeader) {
+      return this.handleAgentAttach(request, agentIdHeader);
+    }
+
+    const p2pMode = url.searchParams.get('mode') === 'p2p';
+
     // 处理会话断线秒级重连 (Re-attach)
     const resumeToken = url.searchParams.get('resume_token');
     const resumeSessionId = url.searchParams.get('session');
     if (resumeToken && resumeSessionId) {
+      if (p2pMode) {
+        return this.handleSignalAttach(request, url, resumeSessionId, resumeToken);
+      }
       return this.handleResumeRequest(request, url, resumeSessionId, resumeToken);
+    }
+
+    if (p2pMode) {
+      return this.handleSignalAttach(request, url, null, null);
     }
 
     let prefilledConfig: SSHConnectionConfig | null = null;
@@ -228,6 +320,17 @@ export class SSHSessionDO {
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     try {
+      // P2P 信令角色的消息与中继会话消息完全分流
+      const role = this.roleOf(ws);
+      if (role === 'agent') {
+        await this.handleAgentWsMessage(ws, message);
+        return;
+      }
+      if (role === 'signal') {
+        await this.handleSignalWsMessage(ws, message);
+        return;
+      }
+
       const session = this.sessions.get(ws);
       if (session) {
         await session.handleWebSocketMessage(message);
@@ -302,6 +405,16 @@ export class SSHSessionDO {
     _reason: string,
     wasClean: boolean
   ): Promise<void> {
+    const role = this.roleOf(ws);
+    if (role === 'agent') {
+      if (this.agentWs === ws) this.agentWs = null;
+      return;
+    }
+    if (role === 'signal') {
+      this.handleSignalWsClose(ws);
+      return;
+    }
+
     const session = this.sessions.get(ws);
     if (session) {
       const chain = this.sessionChains.get(ws) || [session];
@@ -373,6 +486,469 @@ export class SSHSessionDO {
   async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
     console.error('WebSocket error:', error);
     await this.webSocketClose(ws, 1011, 'Error', false);
+  }
+
+  // ==================== P2P 信令：角色解析与连接挂载 ====================
+
+  /**
+   * 解析 WS 角色：优先匹配内存引用，其次读取 attachment（休眠恢复后
+   * 内存映射为空，attachment 是唯一幸存的角色标记）。
+   */
+  private roleOf(ws: WebSocket): WsRole | null {
+    if (this.agentWs === ws) return 'agent';
+    if (this.signalWs === ws) return 'signal';
+    try {
+      const att = ws.deserializeAttachment() as { role?: WsRole } | null;
+      if (att?.role === 'agent') {
+        this.agentWs = ws;
+        return 'agent';
+      }
+      if (att?.role === 'signal') {
+        this.signalWs = ws;
+        return 'signal';
+      }
+    } catch {
+      /* attachment 反序列化失败按普通会话处理 */
+    }
+    return null;
+  }
+
+  private findWsByRole(role: WsRole): WebSocket | null {
+    const cached = role === 'agent' ? this.agentWs : this.signalWs;
+    if (cached && cached.readyState !== 3) return cached;
+    for (const ws of this.state.getWebSockets()) {
+      try {
+        const att = ws.deserializeAttachment() as { role?: WsRole } | null;
+        if (att?.role !== role) continue;
+        if (ws.readyState === 3) continue;
+        if (role === 'agent') this.agentWs = ws;
+        else this.signalWs = ws;
+        return ws;
+      } catch {
+        /* ignore */
+      }
+    }
+    return null;
+  }
+
+  /** Agent 常驻信令 WS 挂载；身份已由 Worker 校验并注入 x-agent-* 头。 */
+  private handleAgentAttach(request: Request, agentId: string): Response {
+    const userId = Number(request.headers.get('x-agent-user-id'));
+    const githubId = request.headers.get('x-agent-github-id') || '';
+    if (!Number.isInteger(userId) || !githubId) {
+      return new Response('Invalid agent identity', { status: 400 });
+    }
+
+    const existing = this.findWsByRole('agent');
+    if (existing) {
+      try {
+        existing.close(1000, 'Replaced by new agent connection');
+      } catch {
+        /* 旧连接可能已关闭 */
+      }
+    }
+
+    const pair = new WebSocketPair();
+    const [client, server] = [pair[0], pair[1]];
+    this.agentWs = server;
+    this.agentMeta = { agentId, userId, githubId };
+    server.serializeAttachment({ role: 'agent' });
+    this.state.acceptWebSocket(server);
+    // ping 由边缘自动应答，不唤醒 DO（信令 DO 的设计目标是空闲可休眠）。
+    try {
+      this.state.setWebSocketAutoResponse(
+        new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}')
+      );
+    } catch {
+      /* 边缘自动应答不可用时退化为 DO 内应答 */
+    }
+    this.recordAgentHeartbeat();
+    return new Response(null, { status: 101, webSocket: client } as any);
+  }
+
+  /** 浏览器信令 WS 挂载（session:* 实例，mode=p2p）。 */
+  private async handleSignalAttach(
+    request: Request,
+    url: URL,
+    resumeSessionId: string | null,
+    resumeToken: string | null
+  ): Promise<Response> {
+    const sessionName =
+      resumeSessionId ||
+      url.searchParams.get('session') ||
+      `session:${Date.now()}:${crypto.randomUUID()}`;
+    if (!isValidSessionName(sessionName)) {
+      return Response.json({ error: 'Invalid session name' }, { status: 400 });
+    }
+
+    const ctx: SignalContext = {
+      sessionName,
+      agentId: '',
+      iceServers: parseIceServers(this.safeJsonParse(request.headers.get('x-ice-servers'))),
+      ready: false,
+    };
+
+    if (resumeSessionId && resumeToken) {
+      // 恢复轮：路由信息来自存档，resume 凭据随请求参数透传给 Agent 校验
+      const stored = (await this.state.storage.get(SIGNAL_STORAGE_KEY)) as
+        | { agentId?: string; shareId?: string }
+        | undefined;
+      if (!stored?.agentId) {
+        return Response.json({ error: 'P2P session expired or not found' }, { status: 404 });
+      }
+      ctx.agentId = stored.agentId;
+      ctx.shareId = stored.shareId;
+      ctx.resume = {
+        resumeToken,
+        cols: Number(url.searchParams.get('cols')) || undefined,
+        rows: Number(url.searchParams.get('rows')) || undefined,
+        didNonce: url.searchParams.get('did_nonce') || undefined,
+        didTs: Number(url.searchParams.get('did_ts')) || undefined,
+        didSig: url.searchParams.get('did_sig') || undefined,
+      };
+    } else {
+      const agentId = request.headers.get('x-agent-id');
+      const configHeader = request.headers.get('x-ssh-config');
+      if (!agentId || !configHeader) {
+        return Response.json({ error: 'Missing P2P session parameters' }, { status: 400 });
+      }
+      try {
+        ctx.config = JSON.parse(decodeURIComponent(configHeader)) as SSHConnectionConfig;
+      } catch {
+        return Response.json({ error: 'Invalid config header' }, { status: 400 });
+      }
+      ctx.agentId = agentId;
+      ctx.shareId = ctx.config.sessionPolicy?.shareId;
+      // 存档路由信息：休眠后 resume / 分享撤销仍能定位 Agent
+      this.state.waitUntil?.(
+        this.state.storage
+          .put(SIGNAL_STORAGE_KEY, { agentId, shareId: ctx.shareId ?? null })
+          .catch(() => undefined)
+      );
+    }
+
+    this.signalContext = ctx;
+
+    const pair = new WebSocketPair();
+    const [client, server] = [pair[0], pair[1]];
+    server.serializeAttachment({ role: 'signal' });
+    this.state.acceptWebSocket(server);
+    this.signalWs = server;
+
+    try {
+      server.send(
+        JSON.stringify({
+          type: 'signal_ready',
+          session: sessionName,
+          p2pProto: P2P_PROTO_VERSION,
+          iceServers: ctx.iceServers,
+        })
+      );
+    } catch {
+      /* 客户端立即断开时忽略 */
+    }
+
+    ctx.readyTimeout = setTimeout(() => {
+      if (ctx.ready) return;
+      try {
+        server.send(JSON.stringify({ type: 'signal_error', message: 'P2P signaling timeout' }));
+        server.close(1011, 'Signaling timeout');
+      } catch {
+        /* ignore */
+      }
+      void this.deliverToAgent(ctx.agentId, [
+        { type: 'rtc_abort', session: ctx.sessionName },
+      ]);
+    }, SIGNAL_READY_TIMEOUT_MS);
+
+    return new Response(null, { status: 101, webSocket: client } as any);
+  }
+
+  // ==================== P2P 信令：消息处理 ====================
+
+  private async handleSignalWsMessage(
+    ws: WebSocket,
+    message: string | ArrayBuffer
+  ): Promise<void> {
+    if (typeof message !== 'string' || !isSignalSizeOk(message)) return;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(message);
+    } catch {
+      return;
+    }
+    if ((raw as { type?: string }).type === 'ping') {
+      try {
+        ws.send(JSON.stringify({ type: 'pong' }));
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    const msg = parseBrowserSignal(raw);
+    const ctx = this.signalContext;
+    if (!msg || !ctx) return;
+
+    switch (msg.type) {
+      case 'rtc_offer': {
+        const envelopes: Record<string, unknown>[] = [];
+        if (ctx.config) {
+          envelopes.push({
+            type: 'session_init',
+            session: ctx.sessionName,
+            p2pProto: P2P_PROTO_VERSION,
+            config: ctx.config,
+            iceServers: ctx.iceServers,
+          });
+        } else if (ctx.resume) {
+          envelopes.push({
+            type: 'session_resume',
+            session: ctx.sessionName,
+            resumeToken: ctx.resume.resumeToken,
+            cols: ctx.resume.cols,
+            rows: ctx.resume.rows,
+            didNonce: ctx.resume.didNonce,
+            didTs: ctx.resume.didTs,
+            didSig: ctx.resume.didSig,
+            iceServers: ctx.iceServers,
+          });
+        } else {
+          return;
+        }
+        envelopes.push({ type: 'rtc_offer', session: ctx.sessionName, sdp: msg.sdp });
+        const delivered = await this.deliverToAgent(ctx.agentId, envelopes);
+        if (!delivered) {
+          try {
+            ws.send(
+              JSON.stringify({ type: 'signal_error', message: 'Agent is not reachable' })
+            );
+          } catch {
+            /* ignore */
+          }
+        }
+        return;
+      }
+      case 'rtc_ice': {
+        await this.deliverToAgent(ctx.agentId, [
+          { type: 'rtc_ice', session: ctx.sessionName, candidate: msg.candidate },
+        ]);
+        return;
+      }
+      case 'rtc_ready': {
+        ctx.ready = true;
+        if (ctx.readyTimeout) {
+          clearTimeout(ctx.readyTimeout);
+          ctx.readyTimeout = undefined;
+        }
+        // 信令使命完成：关闭信令 WS，session DO 进入可休眠空闲态
+        try {
+          ws.close(1000, 'Signaling complete');
+        } catch {
+          /* ignore */
+        }
+        this.signalWs = null;
+        return;
+      }
+      case 'rtc_failed': {
+        await this.deliverToAgent(ctx.agentId, [
+          { type: 'rtc_abort', session: ctx.sessionName },
+        ]);
+        try {
+          ws.close(1011, 'RTC failed');
+        } catch {
+          /* ignore */
+        }
+        this.signalWs = null;
+        return;
+      }
+    }
+  }
+
+  private handleSignalWsClose(ws: WebSocket): void {
+    if (this.signalWs === ws) this.signalWs = null;
+    const ctx = this.signalContext;
+    if (ctx && !ctx.ready) {
+      if (ctx.readyTimeout) {
+        clearTimeout(ctx.readyTimeout);
+        ctx.readyTimeout = undefined;
+      }
+      // 信令中途断开：中止 Agent 侧的半开 RTC，避免悬挂
+      void this.deliverToAgent(ctx.agentId, [{ type: 'rtc_abort', session: ctx.sessionName }]);
+    }
+  }
+
+  private async handleAgentWsMessage(
+    _ws: WebSocket,
+    message: string | ArrayBuffer
+  ): Promise<void> {
+    if (typeof message !== 'string' || !isSignalSizeOk(message)) return;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(message);
+    } catch {
+      return;
+    }
+    const msg = parseAgentSignal(raw);
+    if (!msg) return;
+
+    switch (msg.type) {
+      case 'hello':
+        this.recordAgentHeartbeat(msg.version);
+        return;
+      case 'heartbeat':
+        this.recordAgentHeartbeat(msg.version);
+        return;
+      case 'ping':
+        try {
+          _ws.send(JSON.stringify({ type: 'pong' }));
+        } catch {
+          /* ignore */
+        }
+        return;
+      case 'rtc_answer':
+      case 'rtc_ice':
+      case 'rtc_ready':
+      case 'rtc_failed':
+      case 'session_error':
+      case 'session_ended':
+        await this.deliverToSession(msg.session, msg);
+        return;
+    }
+  }
+
+  // ==================== P2P 信令：投递与存档 ====================
+
+  /** Worker/对端 DO 投递信令负载到本 DO 持有的 WS。 */
+  private async handleInternalDeliver(request: Request): Promise<Response> {
+    let body: { to?: string; payload?: unknown };
+    try {
+      body = await request.json<{ to?: string; payload?: unknown }>();
+    } catch {
+      return Response.json({ error: 'Invalid deliver body' }, { status: 400 });
+    }
+    const payloads = Array.isArray(body.payload) ? body.payload : [body.payload];
+
+    if (body.to === 'agent') {
+      const ws = this.findWsByRole('agent');
+      if (!ws || ws.readyState !== 1) {
+        return Response.json({ delivered: false }, { status: 409 });
+      }
+      for (const payload of payloads) {
+        ws.send(JSON.stringify(payload));
+      }
+      return Response.json({ delivered: true });
+    }
+
+    if (body.to === 'browser') {
+      for (const payload of payloads) {
+        // Agent 上报会话终结：清理信令存档，无需转发浏览器
+        if ((payload as { type?: string })?.type === 'session_ended') {
+          await this.clearSignalContext();
+          continue;
+        }
+        const ws = this.findWsByRole('signal');
+        if (!ws || ws.readyState !== 1) {
+          return Response.json({ delivered: false }, { status: 409 });
+        }
+        ws.send(JSON.stringify(payload));
+      }
+      return Response.json({ delivered: true });
+    }
+
+    return Response.json({ error: 'Invalid deliver target' }, { status: 400 });
+  }
+
+  /** session:* DO → agent:* DO 的信令投递（同绑定 idFromName 直达，不经 Worker 跳转）。 */
+  private async deliverToAgent(
+    agentId: string,
+    payloads: Record<string, unknown>[]
+  ): Promise<boolean> {
+    if (!agentId) return false;
+    try {
+      const stub = this.env.SSH_SESSION.get(
+        this.env.SSH_SESSION.idFromName(`agent:${agentId}`)
+      );
+      const response = await stub.fetch(
+        new Request('http://internal/internal/deliver', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to: 'agent', payload: payloads }),
+        })
+      );
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /** agent:* DO → session:* DO 的信令投递。 */
+  private async deliverToSession(session: string, payload: unknown): Promise<boolean> {
+    if (!isValidSessionName(session)) return false;
+    try {
+      const stub = this.env.SSH_SESSION.get(this.env.SSH_SESSION.idFromName(session));
+      const response = await stub.fetch(
+        new Request('http://internal/internal/deliver', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to: 'browser', payload }),
+        })
+      );
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Agent 心跳写库（粗粒度，最小间隔节流；DO 可能休眠，内存节流即足够）。 */
+  private recordAgentHeartbeat(version?: string): void {
+    const meta = this.agentMeta;
+    if (!meta || !this.env.USER_DB) return;
+    const now = Date.now();
+    if (now - this.lastAgentHeartbeatAt < AGENT_HEARTBEAT_MIN_INTERVAL_MS) return;
+    this.lastAgentHeartbeatAt = now;
+    const promise = this.env.USER_DB.get(this.env.USER_DB.idFromName(meta.githubId))
+      .fetch(
+        new Request('http://internal/internal/agents/heartbeat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: meta.userId,
+            agent_id: meta.agentId,
+            version,
+          }),
+        })
+      )
+      .then(() => undefined)
+      .catch(() => undefined);
+    this.state.waitUntil?.(promise);
+  }
+
+  private async clearSignalContext(): Promise<void> {
+    const ctx = this.signalContext;
+    if (ctx?.readyTimeout) clearTimeout(ctx.readyTimeout);
+    this.signalContext = null;
+    if (this.signalWs) {
+      try {
+        this.signalWs.close(1000);
+      } catch {
+        /* ignore */
+      }
+      this.signalWs = null;
+    }
+    try {
+      await this.state.storage.delete(SIGNAL_STORAGE_KEY);
+    } catch {
+      /* 存档删除失败不影响清理 */
+    }
+  }
+
+  private safeJsonParse(raw: string | null): unknown {
+    if (!raw) return undefined;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return undefined;
+    }
   }
 
   private async handleResumeRequest(

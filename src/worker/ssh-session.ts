@@ -26,6 +26,7 @@ import { ECDHKeyExchange } from '../ssh/kex-ecdh';
 import { KeyDerivation } from '../ssh/keys';
 import { nextSequenceNumber, SSHPacketBuilder, SSHPacketParser } from '../ssh/packet';
 import { SSHTransport } from '../ssh/transport';
+import { CHANNEL_OPEN, type SessionChannel } from '../session-channel';
 import type { Env } from '../types';
 import { DetachedSessionBuffer } from './ssh-detached-buffer';
 import {
@@ -33,7 +34,7 @@ import {
   type PendingAuthChallenge,
 } from './ssh-interactive-auth';
 import { parseIdleTimeout } from './idle-timeout';
-import { ShareAuditWriter } from './share-audit-writer';
+import { type ShareAuditSink, ShareAuditWriter } from './share-audit-writer';
 import {
   normalizeTerminalSize,
   type SessionKeys,
@@ -103,13 +104,23 @@ export interface SSHSessionOptions {
    * 未传入时从 env.IDLE_TIMEOUT 解析，默认 30 分钟；0 表示禁用。
    */
   idleTimeoutMs?: number;
+  /**
+   * P2P 模式下由 Agent 注入的审计通道（HTTP 回传 Worker）。
+   * 缺省时 ShareAuditWriter 走 env.SSH_SHARE DO 直连。
+   */
+  shareAuditSink?: ShareAuditSink;
+  /**
+   * P2P 模式下由 Agent 注入的 OS 持久化回调（HTTP 回传 Worker）。
+   * 缺省时走 env.USER_DB DO 直连。
+   */
+  persistOS?: (os: string) => Promise<void>;
 }
 
 export class SSHSession {
   private readonly textEncoder = new TextEncoder();
   private readonly textDecoder = new TextDecoder();
-  private ws: WebSocket;
-  private sftpWs: WebSocket | null = null;
+  private ws: SessionChannel;
+  private sftpWs: SessionChannel | null = null;
   private socket: any;
   private config: SSHConnectionConfig;
   private strictHostKeyVerify: boolean;
@@ -214,10 +225,11 @@ export class SSHSession {
     }
   > = new Map();
   private channelWindowWaiters: Map<number, Array<() => void>> = new Map();
-  private env: Env | null = null;
+  private env: Partial<Env> | null = null;
   private userId: string | null = null;
   private githubId: string | null = null;
   private osDetectInProgress: boolean = false;
+  private readonly persistOSOverride?: (os: string) => Promise<void>;
   private readonly shareAuditor: ShareAuditWriter;
   private get shareAuditStarted(): boolean {
     return this.shareAuditor.isStarted();
@@ -259,13 +271,13 @@ export class SSHSession {
   }
 
   constructor(
-    ws: WebSocket,
+    ws: SessionChannel,
     socket: any,
     config: SSHConnectionConfig,
     strictHostKeyVerify: boolean = true,
     debugMode: boolean = false,
     sftpAttachUrl?: string,
-    env?: Env,
+    env?: Partial<Env>,
     userId?: string,
     githubId?: string,
     options: SSHSessionOptions = {}
@@ -283,6 +295,7 @@ export class SSHSession {
     this.ownsWebSocket = options.ownsWebSocket !== false;
     this.allowKeyboardInteractive = options.allowKeyboardInteractive !== false;
     this.waitUntil = options.waitUntil;
+    this.persistOSOverride = options.persistOS;
     this.idleTimeoutMs =
       options.idleTimeoutMs !== undefined
         ? options.idleTimeoutMs
@@ -301,6 +314,7 @@ export class SSHSession {
 
     this.shareAuditor = new ShareAuditWriter({
       env: this.env || undefined,
+      sink: options.shareAuditSink,
       sessionPolicy: config.sessionPolicy,
       waitUntil: options.waitUntil,
       onFatalAuditFailure: (msg) => {
@@ -395,7 +409,7 @@ export class SSHSession {
     return opened;
   }
 
-  attachSFTPWebSocket(ws: WebSocket): void {
+  attachSFTPWebSocket(ws: SessionChannel): void {
     if (this.sftpWs && this.sftpWs !== ws) {
       try {
         this.sftpWs.close(1000, 'Replaced by new SFTP WebSocket');
@@ -411,7 +425,7 @@ export class SSHSession {
     }
   }
 
-  detachSFTPWebSocket(ws: WebSocket, closeChannel: boolean = true): void {
+  detachSFTPWebSocket(ws: SessionChannel, closeChannel: boolean = true): void {
     if (this.sftpWs === ws) {
       this.sftpWs = null;
       if (closeChannel) {
@@ -2756,11 +2770,12 @@ export class SSHSession {
         userId: this.userId,
         githubId: this.githubId,
         env: this.env,
+        persistOS: this.persistOSOverride,
         executeCommand: (cmd, timeout) => this.executeRemoteCommand(cmd, timeout),
         onOSDetected: (detected) => {
           this.config.os = detected;
           try {
-            if (this.ws.readyState === WebSocket.OPEN) {
+            if (this.ws.readyState === CHANNEL_OPEN) {
               this.ws.send(
                 JSON.stringify({
                   type: 'os_detected',
@@ -2978,7 +2993,7 @@ export class SSHSession {
   }
 
   public async reattachWebSocket(
-    newWs: WebSocket,
+    newWs: SessionChannel,
     newSize?: TerminalSize | null,
     credentials?: {
       resumeToken?: string;

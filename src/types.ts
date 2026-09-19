@@ -84,6 +84,11 @@ export interface SSHSessionPolicy {
   allowReconnect: false;
   /** 分享会话的绝对结束时间（Unix 毫秒）。 */
   sessionExpiresAt: number;
+  /**
+   * 认领时绑定的访问者设备公钥（SPKI base64url）。
+   * P2P 模式下随 session_init 下发给 Agent，用于断线恢复的设备挑战验签。
+   */
+  devicePubKey?: string;
 }
 
 export interface SSHJumpHostConfig {
@@ -167,6 +172,17 @@ export interface Env {
   DEBUG_MODE?: string;
   // 一次性 SSH 分享（默认关闭；true 时登录用户可创建分享链接）
   ENABLE_SSH_SHARING?: string;
+  // P2P（WebRTC DataChannel 经用户 Agent 直连）总开关；'true' 时开放
+  // Agent 注册/信令 API，实际可用性仍要求 GitHub 登录 + 已配对在线 Agent。
+  ENABLE_P2P?: string;
+  // Cloudflare Realtime TURN 凭据：服务端代签短期 iceServers，
+  // 长期 TURN key 永不暴露给浏览器或 Agent。
+  TURN_KEY_ID?: string;
+  TURN_API_TOKEN?: string;
+  // 可选自建 TURN 兜底（逗号分隔 URI，如 turns:turn.example.com:5349?transport=tcp）
+  TURN_EXTRA_URIS?: string;
+  TURN_EXTRA_USERNAME?: string;
+  TURN_EXTRA_CREDENTIAL?: string;
 }
 
 export interface UserInfo {

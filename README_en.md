@@ -15,6 +15,8 @@
 
 CloudSSH is a browser-based SSH client running on Cloudflare Workers. The browser connects to an edge Worker over WebSocket, and the Worker opens a direct TCP socket to the target SSH server. No local client installation and no self-hosted backend required.
 
+For signed-in users, CloudSSH also offers an optional **P2P Agent mode**: run a lightweight agent inside your network, and the browser connects to it over a WebRTC DataChannel while the agent opens the TCP connection to the SSH target. In this mode Cloudflare only carries signaling and metadata — session traffic never touches the Worker — and the agent can reach internal hosts that are unreachable from the edge.
+
 ## Features
 
 ### SSH Terminal
@@ -42,6 +44,14 @@ CloudSSH is a browser-based SSH client running on Cloudflare Workers. The browse
 - **Automatic OS detection**: on first connect to a saved server, a separate SSH exec channel reads `/etc/os-release` or `uname` and shows the system icon on the server card; runs in the background without blocking the terminal.
 - **Command snippets**: `{{var}}` parameter placeholders, category filtering, fuzzy search, copy/fill/execute; cloud storage for signed-in users (≤100 per user), `localStorage` fallback for anonymous users.
 - Per-user theme sync, cloud-persisted known-host fingerprints, encrypted anonymous connection history (local AES-256-GCM, last 5 entries).
+
+### P2P Agent Mode (optional)
+
+- **WebRTC direct connect**: the browser establishes an encrypted DataChannel with your self-hosted agent; terminal and SFTP each run on their own sub-channel. Cloudflare handles only offer/answer signaling and metadata — no session traffic.
+- **Internal-network reachability**: the agent dials out to the signaling DO, so it can proxy SSH hosts behind NAT or on private networks without port forwarding.
+- **TURN fallback**: symmetric NAT or UDP-restricted networks relay through Cloudflare Realtime TURN (self-hosted TURN can be appended as a fallback); signaling failures degrade automatically to the ordinary Worker relay, and share tickets transparently reuse the same connection.
+- **Resume**: sessions linger for a 60-second grace window on the agent; resume rotates the resume token, re-mints ICE/TURN credentials, and keeps the device-signature challenge for bound share sessions.
+- **Security boundary**: agent tokens look like `<githubId>:<agentId>:<secret>` — the server stores only a hash. Target allowlists (`*.corp.local` wildcards), a blocked high-risk port list, and a concurrent-session cap are enforced; share-session audit events are forwarded by the agent to ShareDO, and host-key verification plus auth interaction are unchanged.
 
 ### Sharing & Security
 
@@ -72,14 +82,21 @@ flowchart TB
         SSH["SSH Server<br/>(OpenSSH/Dropbear)"]
     end
 
+    subgraph "User Network (optional P2P)"
+        Agent["CloudSSH Agent<br/>Node.js + werift"]
+    end
+
     UI <-->|"WebSocket<br/>Terminal I/O"| Worker
     SFTP <-->|"WebSocket<br/>SFTP Data"| Worker
     Trzsz <-->|"trzsz Protocol"| UI
+    UI <-.->|"RTCDataChannel<br/>Terminal + SFTP (P2P)"| Agent
+    Agent <-->|"Signaling WebSocket"| Worker
     Worker <-->|"WebSocket"| SSH_DO
     Worker <-->|"Internal API"| User_DO
     Worker <-->|"Claim / Revoke / Read Audit"| Share_DO
     SSH_DO -->|"Lifecycle / SFTP / Terminal Output"| Share_DO
     SSH_DO <-->|"TCP Socket<br/>@cloudflare/sockets"| SSH
+    Agent -->|"net.connect"| SSH
 ```
 
 The frontend is not deployed separately: `scripts/build-html.js` inlines the Vite build into a single HTML document written to `src/worker/html.ts` (generated — do not edit), which the Worker serves directly.
@@ -120,6 +137,10 @@ All optional features are controlled by Worker environment variables under **Set
 | `REQUIRE_GITHUB_AUTH` | Optional | `false` | `true` disables anonymous SSH; every connection needs a valid GitHub session. |
 | `TURNSTILE_SITEKEY` / `TURNSTILE_SECRET` | Optional | — | Turnstile site key and secret; the feature is off when either is unset. |
 | `ENABLE_SSH_SHARING` | Optional | `false` | `true` lets signed-in users create one-time controlled SSH shares. |
+| `ENABLE_P2P` | Optional | `false` | `true` opens the agent registry and signaling APIs; signed-in users can then pick a self-hosted agent's P2P channel when connecting. |
+| `TURN_KEY_ID` / `TURN_API_TOKEN` | Recommended for P2P | — | Cloudflare Realtime TURN key; the server mints short-lived ICE credentials per session. Without it only public STUN is offered. |
+| `TURN_EXTRA_URIS` | Optional | — | Comma-separated self-hosted TURN URIs (e.g. `turn:turn.example.com:443?transport=tcp`), appended to `iceServers` as fallback candidates. |
+| `TURN_EXTRA_USERNAME` / `TURN_EXTRA_CREDENTIAL` | Optional | — | Static credentials paired with `TURN_EXTRA_URIS`. |
 | `STRICT_HOST_KEY_VERIFY` | Optional | `true` | Strict host-key signature verification; **keep enabled in production**. |
 | `DEBUG_MODE` | Optional | `false` | Verbose handshake/diagnostic logging; enable only for troubleshooting. |
 
@@ -169,6 +190,39 @@ Requires GitHub OAuth and saved servers:
 
 Jump chains must stay within one user space — no self-references or cycles; a jump host referenced by other servers cannot be deleted. SSRF public-address checks and DO region scheduling are evaluated against the outermost Cloudflare-facing entry only; that entry alone triggers IPinfo region inference, so downstream private addresses are never exposed. Every hop performs independent TOFU verification, and host fingerprints for private targets are scoped to the full jump path.
 
+### Using P2P Agent Mode
+
+P2P mode requires GitHub sign-in (agents are bound to your account). Set `ENABLE_P2P=true` on the Worker, and optionally configure TURN:
+
+```bash
+# Cloudflare Realtime TURN (recommended): Realtime → create a TURN key for key id + API token
+TURN_KEY_ID=<key id>
+TURN_API_TOKEN=<api token>   # store as Secret
+
+# Optional: self-hosted coturn fallback (more reliable on UDP-restricted/symmetric NAT)
+TURN_EXTRA_URIS=turn:turn.example.com:443?transport=tcp
+TURN_EXTRA_USERNAME=cloudssh
+TURN_EXTRA_CREDENTIAL=<static secret>
+```
+
+1. After signing in, open **Agent** in the server-list toolbar, create an agent, and **copy the token immediately** — plaintext is returned only once; the server stores only a hash.
+2. Run the agent on a machine that can reach the SSH targets (Node.js ≥ 22):
+
+   ```bash
+   cd agent && pnpm install && pnpm run build
+   node dist/cli.js \
+     --server https://<your-site> \
+     --token <githubId>:<agentId>:<secret> \
+     --allowlist '*.corp.local,bastion.internal' \
+     --max-sessions 8
+   ```
+
+   Every flag also has an env var: `AGENT_TOKEN`/`AGENT_SERVER`/`AGENT_SIGNAL_URL`/`AGENT_ALLOWLIST`/`AGENT_MAX_SESSIONS`/`AGENT_DEBUG`.
+
+3. When connecting to a saved server, pick the agent (the default stays the Worker relay). The browser completes ICE/DTLS negotiation with the agent via DO signaling, then terminal and SFTP run on DataChannels. Signaling timeouts or negotiation failures fall back to the relay automatically — share links degrade transparently without consuming a second ticket.
+
+> Notes: credentials are decrypted server-side and delivered to the agent inside `session_init` over the signaling channel — the same trust model as the existing relay path. Audit for P2P share sessions is forwarded by the agent and is therefore application-level bookkeeping. The agent host is the new network trust boundary — scope it down with `--allowlist`.
+
 ## Development
 
 ### Requirements
@@ -212,6 +266,7 @@ CloudSSH/
 │   └── types.ts              # Shared types (Env, message protocol, etc.)
 ├── frontend/
 │   └── src/                  # TypeScript + xterm.js + Tailwind frontend
+├── agent/                    # P2P agent: Node.js + werift, DataChannel ↔ SSH TCP gateway
 ├── docs/theme-editor/        # Visual theme editor (published via GitHub Pages)
 ├── scripts/build-html.js     # Builds the frontend and inlines it into src/worker/html.ts
 ├── tests/                    # Vitest unit/integration + Playwright/axe E2E

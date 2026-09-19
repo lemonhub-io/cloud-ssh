@@ -1,0 +1,30 @@
+{
+  "name": "cloudssh-agent",
+  "version": "0.1.0",
+  "description": "CloudSSH P2P gateway agent — bridges browser WebRTC DataChannels to SSH servers",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "cloudssh-agent": "dist/agent.js"
+  },
+  "scripts": {
+    "build": "esbuild src/cli.ts --bundle --format=esm --platform=node --target=node20 --external:werift --external:ws --outfile=dist/agent.js",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/agent.js"
+  },
+  "dependencies": {
+    "werift": "0.24.4",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260630.1",
+    "@types/node": "^26.2.0",
+    "@types/ws": "^8.18.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -15,6 +15,8 @@
 
 CloudSSH 是一个运行在 Cloudflare Workers 上的浏览器 SSH 客户端。浏览器通过 WebSocket 连接边缘 Worker，Worker 使用 TCP Socket 直连目标 SSH 服务器。无需安装本地客户端，也无需自建后端。
 
+对于登录用户，CloudSSH 还支持可选的 **P2P Agent 模式**：在你的网络中运行一个轻量 Agent，浏览器经 WebRTC DataChannel 直连 Agent，由 Agent 向 SSH 目标发起 TCP 连接。此模式下 Cloudflare 仅承担信令与元数据，数据面不再经过 Worker，同时可触达 Worker 无法直连的内网主机。
+
 ## 功能特性
 
 ### SSH 终端
@@ -42,6 +44,14 @@ CloudSSH 是一个运行在 Cloudflare Workers 上的浏览器 SSH 客户端。�
 - **操作系统自动识别**：首次连接已保存服务器时，经独立 SSH exec 通道读取 `/etc/os-release` 或 `uname`，在服务器卡片显示系统图标；后台执行、不阻塞终端。
 - **命令片段库**：`{{var}}` 参数占位符、分类筛选、模糊搜索、一键复制/填入/执行；登录用户云端存储（每用户 ≤100 条），匿名用户降级到 `localStorage`。
 - 主题、已知主机指纹、匿名连接历史（本地 AES-256-GCM 加密，最近 5 条）等偏好持久化。
+
+### P2P Agent 模式（可选）
+
+- **WebRTC 直连**：浏览器与自托管 Agent 之间建立加密 DataChannel，终端与 SFTP 各走一条子通道；Cloudflare 侧只做 offer/answer 信令与元数据协调，不承载会话流量。
+- **内网可达**：Agent 出站连接信令 DO，因此可代理 Worker 无法直达的 NAT/内网 SSH 主机，无需端口映射。
+- **TURN 回退**：对称 NAT 或 UDP 受限网络经 Cloudflare Realtime TURN 中继（支持自建 TURN 兜底）；信令失败自动回落到普通 Worker 中继，分享等一次性票据场景透明降级复用同一连接。
+- **断线恢复**：会话在 Agent 侧保持 60 秒宽限，恢复时轮换 resume token、重新签发 ICE/TURN 凭据；绑定设备的分享会话沿用签名挑战校验。
+- **安全边界**：Agent 令牌形如 `<githubId>:<agentId>:<secret>`，服务端仅存哈希；支持目标主机白名单（`*.corp.local` 通配）、高危端口黑名单、并发会话上限；分享会话审计由 Agent 回传至 ShareDO，主机指纹验证与认证交互不变。
 
 ### 分享与安全
 
@@ -72,14 +82,21 @@ flowchart TB
         SSH["SSH 服务器<br/>(OpenSSH/Dropbear)"]
     end
 
+    subgraph "用户网络（可选 P2P）"
+        Agent["CloudSSH Agent<br/>Node.js + werift"]
+    end
+
     UI <-->|"WebSocket<br/>终端 I/O"| Worker
     SFTP <-->|"WebSocket<br/>SFTP 数据"| Worker
     Trzsz <-->|"trzsz 协议"| UI
+    UI <-.->|"RTCDataChannel<br/>终端 + SFTP（P2P）"| Agent
+    Agent <-->|"信令 WebSocket"| Worker
     Worker <-->|"WebSocket"| SSH_DO
     Worker <-->|"Internal API"| User_DO
     Worker <-->|"领取 / 撤销 / 查看审计"| Share_DO
     SSH_DO -->|"生命周期 / SFTP / 终端输出"| Share_DO
     SSH_DO <-->|"TCP Socket<br/>@cloudflare/sockets"| SSH
+    Agent -->|"net.connect"| SSH
 ```
 
 前端不是独立部署的：`scripts/build-html.js` 将 Vite 产物内联为单个 HTML 写入 `src/worker/html.ts`（自动生成，勿手改），由 Worker 直接返回。
@@ -120,6 +137,10 @@ pnpm run deploy           # 构建前端并部署 Worker
 | `REQUIRE_GITHUB_AUTH` | 可选 | `false` | `true` 时禁用匿名 SSH，所有连接必须持有有效 GitHub 会话。 |
 | `TURNSTILE_SITEKEY` / `TURNSTILE_SECRET` | 可选 | 无 | Turnstile 人机验证站点密钥与服务端密钥；任一为空则该功能关闭。 |
 | `ENABLE_SSH_SHARING` | 可选 | `false` | `true` 时允许登录用户创建一次性受控 SSH 分享。 |
+| `ENABLE_P2P` | 可选 | `false` | `true` 时开放 Agent 注册与信令 API，登录用户可在连接时选择经自托管 Agent 的 P2P 通道。 |
+| `TURN_KEY_ID` / `TURN_API_TOKEN` | P2P 建议配置 | 无 | Cloudflare Realtime TURN key，服务端为每个会话签发短时 ICE 凭据；缺失时仅下发公共 STUN。 |
+| `TURN_EXTRA_URIS` | 可选 | 无 | 逗号分隔的自建 TURN 地址（如 `turn:turn.example.com:443?transport=tcp`），追加进 `iceServers` 兜底。 |
+| `TURN_EXTRA_USERNAME` / `TURN_EXTRA_CREDENTIAL` | 可选 | 无 | 与 `TURN_EXTRA_URIS` 配套的静态凭据。 |
 | `STRICT_HOST_KEY_VERIFY` | 可选 | `true` | 主机公钥签名严格校验；**生产环境保持默认**。 |
 | `DEBUG_MODE` | 可选 | `false` | 输出底层握手与诊断日志，仅排障时临时开启。 |
 
@@ -169,6 +190,39 @@ pnpm run deploy           # 构建前端并部署 Worker
 
 跳板链必须属于同一用户空间，不允许自引用或循环；被引用的跳板不能直接删除。SSRF 公网检查与 DO 区域调度均以 Cloudflare 直连的最外层入口为准；只有该入口会执行 IPinfo 区域推断，下游内网地址不会外泄。每跳独立执行 TOFU 验证，内网目标的主机指纹按完整跳转路径隔离。
 
+### 使用 P2P Agent 模式
+
+P2P 模式要求 GitHub 登录（Agent 绑定到账号）。服务端配置 `ENABLE_P2P=true`，并按需配置 TURN：
+
+```bash
+# Cloudflare Realtime TURN（推荐）：Realtime → 创建 TURN key 得到 key id 与 API token
+TURN_KEY_ID=<key id>
+TURN_API_TOKEN=<api token>   # 设为 Secret
+
+# 可选：自建 coturn 兜底（UDP 受限/对称 NAT 环境更稳）
+TURN_EXTRA_URIS=turn:turn.example.com:443?transport=tcp
+TURN_EXTRA_USERNAME=cloudssh
+TURN_EXTRA_CREDENTIAL=<static secret>
+```
+
+1. 登录后在服务器列表工具栏打开 **Agent**，创建 Agent 并**立即复制令牌**——明文只返回一次，服务端仅存哈希。
+2. 在能触达目标 SSH 主机的机器上运行（Node.js ≥ 22）：
+
+   ```bash
+   cd agent && pnpm install && pnpm run build
+   node dist/cli.js \
+     --server https://<你的站点> \
+     --token <githubId>:<agentId>:<secret> \
+     --allowlist '*.corp.local,bastion.internal' \
+     --max-sessions 8
+   ```
+
+   全部参数也可用环境变量：`AGENT_TOKEN`/`AGENT_SERVER`/`AGENT_SIGNAL_URL`/`AGENT_ALLOWLIST`/`AGENT_MAX_SESSIONS`/`AGENT_DEBUG`。
+
+3. 连接已保存服务器时选择该 Agent（默认仍为 Worker 中继）。浏览器先经 DO 信令与 Agent 完成 ICE/DTLS 握手，终端与 SFTP 随后跑在 DataChannel 上；信令超时或协商失败自动回落中继（分享链接透明降级，不消耗第二次票据）。
+
+> 注意事项：凭据解密发生在服务端，`session_init` 经信令通道下发给 Agent（与现有中继路径的信任模型一致）；P2P 分享会话的审计由 Agent 回传，属于应用层留痕；Agent 机器即新的网络信任边界，建议配合 `--allowlist` 收敛可代理的目标范围。
+
 ## 开发
 
 ### 环境准备
@@ -212,6 +266,7 @@ CloudSSH/
 │   └── types.ts              # 共享类型（Env、消息协议等）
 ├── frontend/
 │   └── src/                  # TypeScript + xterm.js + Tailwind 前端
+├── agent/                    # P2P Agent：Node.js + werift，DataChannel ↔ SSH TCP 网关
 ├── docs/theme-editor/        # 可视化主题编辑器（经 GitHub Pages 发布）
 ├── scripts/build-html.js     # 前端构建并内联生成 src/worker/html.ts
 ├── tests/                    # Vitest 单元/集成 + Playwright/axe E2E
